@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>패킹리스트 → LABEL DATA 변환기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root {
+    --ink: #1c2321;
+    --ink-soft: #4a5450;
+    --paper: #f7f8f6;
+    --line: #d8dcd8;
+    --accent: #2f6f4f;
+    --accent-soft: #e7f0ea;
+    --warn: #b8860b;
+    --warn-bg: #fff6df;
+    --danger: #b3423a;
+    --hi: #fff59d;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic", sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 20px 100px; }
+  header { margin-bottom: 20px; }
+  h1 { font-size: 21px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--ink-soft); font-size: 13.5px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+
+  .card {
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 18px;
+  }
+
+  details.rule-box summary { cursor: pointer; font-size: 14px; font-weight: 600; }
+  details.rule-box table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12.5px; }
+  details.rule-box th, details.rule-box td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  details.rule-box th { font-weight: 600; }
+
+  /* rule manager */
+  .ruleset-row {
+    display: flex; align-items: center; justify-content: space-between;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; font-size: 13px;
+  }
+  .ruleset-row.selected { border-color: var(--accent); background: var(--accent-soft); }
+  .ruleset-row .name { font-weight: 600; }
+  .ruleset-row .meta { color: var(--ink-soft); font-size: 12px; font-family: var(--mono); }
+  .ruleset-row .btns { display: flex; gap: 8px; }
+  .ruleset-row .btns button { font-size: 12px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  .ruleset-row .btns button.danger { color: var(--danger); border-color: #f0cfcb; }
+  .ruleset-row label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+
+  .rule-form { border: 1px dashed var(--line); border-radius: 8px; padding: 14px; margin-top: 10px; display: none; }
+  .rule-form.open { display: block; }
+  .rule-form h3 { font-size: 13px; margin: 0 0 10px; }
+  .rule-form .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .rule-form .grp { margin-bottom: 12px; }
+  .rule-form .grp-title { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; }
+  .rule-form label.field { display: block; font-size: 11.5px; color: var(--ink-soft); margin-bottom: 3px; }
+  .rule-form input { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-family: var(--mono); }
+  .rule-form .actions { margin-top: 12px; display: flex; gap: 8px; }
+  .manual-type-block { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--paper); }
+  .manual-type-block .mt-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .manual-type-block .mt-head input[type=text] { font-weight: 600; }
+  .manual-type-block .mt-remove { border: none; background: none; color: var(--danger); cursor: pointer; font-size: 12px; }
+  .manual-type-block .field-toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+  .manual-type-block .field-toggle input[type=text] { flex: 1; }
+  .manual-type-block .field-toggle input[type=checkbox] { width: auto; }
+  .required-field { border-color: var(--danger) !important; background: #fff6f5; }
+  .required-star { color: var(--danger); font-weight: 700; margin-left: 3px; }
+
+  button.primary, button.secondary, button.ghost {
+    font-size: 14px; padding: 10px 18px; border-radius: 8px; cursor: pointer; font-weight: 600;
+    border: 1px solid transparent;
+  }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:disabled { background: #a9c3b3; cursor: not-allowed; }
+  button.secondary { background: #fff; border-color: var(--line); color: var(--ink); }
+  button.ghost { background: none; border-color: transparent; color: var(--ink-soft); }
+  button.ghost:hover { color: var(--danger); }
+  button.small { font-size: 12px; padding: 6px 12px; }
+
+  .dropzone {
+    border: 2px dashed var(--line); border-radius: 12px; background: #fff;
+    padding: 30px 20px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  .dropzone.drag { border-color: var(--accent); background: var(--accent-soft); }
+  .dropzone .big { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+  .dropzone p { margin: 0; font-size: 13px; color: var(--ink-soft); }
+  input[type=file] { display: none; }
+
+  .filelist { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+  .file-row {
+    display: flex; align-items: center; justify-content: space-between;
+    background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px;
+  }
+  .file-row .name { font-family: var(--mono); }
+  .file-row .status.ok { color: var(--accent); }
+  .file-row .status.err { color: var(--danger); }
+  .file-row button { border: none; background: none; color: var(--ink-soft); cursor: pointer; font-size: 13px; }
+  .file-row button:hover { color: var(--danger); }
+
+  .actions-row { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; align-items: center; }
+
+  .stat-row { display: flex; gap: 24px; margin-bottom: 14px; flex-wrap: wrap; }
+  .stat { font-size: 13px; color: var(--ink-soft); }
+  .stat b { color: var(--ink); font-size: 18px; display: block; }
+
+  .pn-table-title { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+  .pn-table-title button { font-size: 11px; padding: 3px 9px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--ink-soft); cursor: pointer; }
+  .pn-table-title button:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .pn-table-wrap { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+  table.pn-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.pn-table th { text-align: left; background: var(--paper); color: var(--ink-soft); font-size: 11px; font-weight: 600; padding: 7px 12px; border-bottom: 1px solid var(--line); }
+  table.pn-table td { padding: 7px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  table.pn-table tr:last-child td { border-bottom: none; }
+  table.pn-table td.pn-cell { font-family: var(--mono); font-weight: 700; color: var(--ink); white-space: nowrap; }
+  table.pn-table td.rs-cell { color: var(--ink-soft); font-size: 12.5px; }
+  table.pn-table td.time-cell { color: var(--ink-soft); font-size: 12px; font-family: var(--mono); white-space: nowrap; }
+  table.pn-table td.del-cell { text-align: right; white-space: nowrap; }
+  table.pn-table .row-del { border: none; background: none; color: var(--ink-soft); opacity: .7; cursor: pointer; font-size: 13px; padding: 3px 6px; border-radius: 6px; }
+  table.pn-table .row-del:hover { opacity: 1; color: var(--danger); background: var(--danger-bg, #fbeceb); }
+
+  .table-scroll { overflow: auto; max-height: 480px; border: 1px solid var(--line); border-radius: 8px; }
+  table.result { border-collapse: collapse; font-size: 12px; font-family: var(--mono); white-space: nowrap; width: max-content; min-width: 100%; }
+  table.result th, table.result td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+  table.result thead th { position: sticky; top: 0; background: #f0f2ef; z-index: 1; font-family: -apple-system, sans-serif; font-size: 11px; color: var(--ink-soft); }
+  table.result td.hi { background: var(--hi); }
+  table.result td.g-editable { padding: 2px 4px; }
+  table.result td.g-editable input { width: 100%; border: 1px solid transparent; background: transparent; font-family: var(--mono); font-size: 12px; padding: 3px 4px; border-radius: 4px; }
+  table.result td.g-editable input:hover { border-color: var(--line); }
+  table.result td.g-editable input:focus { border-color: var(--accent); background: #fff; outline: none; }
+
+  .shorten-row {
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; font-size: 13px;
+  }
+  .shorten-row .meta { font-size: 12px; color: var(--ink-soft); margin-bottom: 6px; font-family: var(--mono); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .shorten-row .tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tag { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 999px; font-family: -apple-system, sans-serif; white-space: nowrap; }
+  .tag.over40 { background: #fff1cc; color: #8a6100; }
+  .tag.specmerged { background: #e3ecfb; color: #2d5db3; }
+  .shorten-row .orig { background: var(--paper); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; font-size: 13px; }
+  .shorten-row .suggest-line {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--accent-soft); border-radius: 6px; padding: 7px 10px; margin-bottom: 8px;
+  }
+  .shorten-row .suggest-tag { font-size: 11px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .shorten-row .suggest-text { flex: 1; min-width: 160px; font-size: 13px; }
+  .shorten-row .edit-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .shorten-row input[type=text] { flex: 1; min-width: 220px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+  .shorten-row .charcount { font-size: 11.5px; color: var(--ink-soft); font-family: var(--mono); min-width: 48px; text-align: right; }
+  .shorten-row .charcount.over { color: var(--danger); font-weight: 600; }
+  .shorten-row button.small { font-size: 12px; padding: 6px 12px; white-space: nowrap; }
+  .shorten-row .err { color: var(--danger); font-size: 12px; margin-top: 6px; }
+
+  .log { font-size: 12.5px; font-family: var(--mono); color: var(--ink-soft); max-height: 180px; overflow-y: auto;
+    background: var(--paper); border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; margin-top: 12px; }
+  .log .warn { color: var(--warn); }
+  .log .err { color: var(--danger); }
+
+  .download-bar {
+    position: sticky; bottom: 0; background: #fff; border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.04); flex-wrap: wrap; gap: 10px;
+  }
+  .download-bar .count { font-size: 13px; color: var(--ink-soft); }
+  .download-bar .count b { color: var(--ink); }
+  .download-bar .btns { display: flex; gap: 10px; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 50;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>패킹리스트 → LABEL DATA 변환기</h1>
+    <div class="sub">패킹리스트(.xlsx)를 올리면 규칙에 맞춰 LABEL DATA로 변환합니다. 모든 처리는 브라우저 안에서만 이뤄집니다.</div>
+  </header>
+
+  <details class="card rule-box">
+    <summary>열 구조 &amp; 고정 규칙 보기</summary>
+    <table id="colRefTable"></table>
+    <p style="margin:10px 0 0; font-size:12.5px; color:var(--ink-soft);">
+      A/G(마스터넘버·파트넘버), H(컴포넌트넘버), I(컴포넌트 설명1), J(컴포넌트 설명2=패킹리스트 REMARK), L(컴포넌트 수량), M(UOM)은 패킹리스트에서 그대로 가져옵니다.
+      나머지 고정값(B/C/D/E/F/N/Q)은 아래 "변환 규칙 관리"에서 규칙 세트로 관리합니다.
+      I열·J열이 각각 40자 이상이면 노란색으로 강조합니다.
+    </p>
+    <p style="margin:10px 0 0; font-size:12.5px; color:var(--warn); background:var(--warn-bg); padding:8px 10px; border-radius:6px;">
+      ⚠️ <b>G열 예외 안내</b>: 일부 부품은 다른 부품(상위 조립품/키트)에 속해서, G열에 마스터 넘버 대신 그 상위 부품의 품번이 들어가야 하는 경우가 있습니다 (예: ACU 관련 부속품들은 G열에 "VP-T537-ACU"가 들어감). 이런 경우는 패킹리스트만으로 자동 판단할 수 없어서, 아래 결과 표에서 <b>G열을 직접 클릭해서 수정</b>해주셔야 합니다.
+    </p>
+  </details>
+
+  <div class="card">
+    <h2>변환 규칙 관리</h2>
+    <div id="rulesetList"></div>
+    <div class="actions-row">
+      <button class="secondary small" id="addRuleBtn">+ 새 규칙 추가</button>
+    </div>
+    <div class="rule-form" id="ruleForm">
+      <h3 id="ruleFormTitle">새 규칙 추가</h3>
+      <div class="grp">
+        <label class="field">규칙 이름</label>
+        <input type="text" id="rf_name" placeholder="예: C1 VSAT">
+      </div>
+      <div class="grp">
+        <div class="grp-title">패킹리스트 품목당 자동 생성 행 (예: 스페어구성품 / 부품box구성품)</div>
+        <div class="grid">
+          <div><label class="field">바코드 카테고리 (B)</label><input id="rf_comp_b" value="2"></div>
+          <div><label class="field">출력 수량 (C)</label><input id="rf_comp_c" value="1"></div>
+          <div><label class="field">바코드 타입 (D)</label><input id="rf_comp_d" value="7"></div>
+          <div><label class="field">프린터 아이디 (E)</label><input id="rf_comp_e" value="9"></div>
+          <div><label class="field">바코드 설명 (F)</label><input id="rf_comp_f" value="스페어구성품"></div>
+          <div><label class="field">Global code (N)</label><input id="rf_comp_n" value="C100"></div>
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; margin-top:8px; font-size:12.5px;">
+          <input type="checkbox" id="rf_comp_g" checked style="width:auto;"> G열(파트넘버)에 마스터 넘버 자동 입력 — 체크 해제 시 빈칸
+        </label>
+      </div>
+      <div class="grp">
+        <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:var(--ink-soft);">
+          <input type="checkbox" id="rf_box_enabled" checked style="width:auto;"> 파트넘버당 1행 자동 생성 (예: 스페어 포장 BOX) 사용
+        </label>
+        <div class="grid" id="rf_box_fields" style="margin-top:8px;">
+          <div><label class="field">바코드 카테고리 (B)</label><input id="rf_box_b" value="0"></div>
+          <div><label class="field">출력 수량 (C)</label><input id="rf_box_c" value="1"></div>
+          <div><label class="field">바코드 타입 (D)</label><input id="rf_box_d" value="8"></div>
+          <div><label class="field">프린터 아이디 (E)</label><input id="rf_box_e" value="15"></div>
+          <div><label class="field">바코드 설명 (F)</label><input id="rf_box_f" value="스페어 포장 BOX"></div>
+          <div><label class="field">Global code (N)</label><input id="rf_box_n" value="C100"></div>
+          <div><label class="field">COO (Q)</label><input id="rf_box_q" value="Made in Korea"></div>
+        </div>
+      </div>
+      <div class="grp">
+        <div class="grp-title">수동 생성 라벨 유형 (예: 시리얼바코드, CE인증, 안테나시리얼, IN BOX 라벨)</div>
+        <div id="rf_manualList"></div>
+        <button class="secondary small" id="rf_addManual" type="button">+ 수동 유형 추가</button>
+      </div>
+      <div class="actions">
+        <button class="primary small" id="rf_save">저장</button>
+        <button class="ghost small" id="rf_cancel">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>패킹리스트 업로드</h2>
+    <div class="dropzone" id="dropzone">
+      <div class="big">패킹리스트 파일을 여기로 끌어다 놓거나 클릭해서 선택하세요</div>
+      <p>여러 개 파일을 한 번에 선택할 수 있습니다 (.xlsx) · 위에서 선택된 규칙이 적용됩니다</p>
+      <input type="file" id="fileInput" accept=".xlsx" multiple>
+    </div>
+    <div class="filelist" id="fileList"></div>
+    <div class="actions-row">
+      <button class="primary" id="processBtn" disabled>선택한 규칙으로 처리하기</button>
+      <button class="secondary" id="clearQueueBtn" style="display:none;">대기열 비우기</button>
+    </div>
+  </div>
+
+  <div class="card" id="summary" style="display:none;">
+    <h2>누적 처리 결과</h2>
+    <div class="stat-row">
+      <div class="stat"><b id="statPN">0</b>파트넘버</div>
+      <div class="stat"><b id="statRows">0</b>총 행 수</div>
+      <div class="stat"><b id="statHi">0</b>40자 이상 강조 셀</div>
+    </div>
+    <div class="pn-table-title"><span>처리된 마스터 넘버</span><button id="refreshBtn">다른 사람 작업 새로고침</button></div>
+    <div class="pn-table-wrap" id="pnChips"></div>
+    <div class="table-scroll"><table class="result" id="resultTable"></table></div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <div class="card" id="shortenCard" style="display:none;">
+    <h2>검토 및 제안</h2>
+    <p style="margin:0 0 12px; font-size:12.5px; color:var(--ink-soft);">
+      자동 처리 중 확인이 필요한 항목들입니다. 각 항목에 어떤 이유로 표시됐는지 태그로 표시됩니다.
+      규칙대로 자동 계산된 제안이 위에 보이고 "이 제안 선택"을 누르면 아래 입력창에 채워지며, "이 제안 적용"을 누르면 선택과 적용이 한 번에 됩니다. 입력창에는 기본적으로 원본 문구가 들어있어 바로 수정할 수도 있고, "적용"을 누르면 반영됩니다.
+    </p>
+    <div id="shortenList"></div>
+  </div>
+
+  <div class="download-bar" id="downloadBar" style="display:none;">
+    <div class="count"><b id="downloadCount">0</b>개 파트넘버, <b id="downloadRows">0</b>행이 누적되어 있습니다.</div>
+    <div class="btns">
+      <button class="ghost" id="resetBtn">전체 초기화</button>
+      <button class="secondary" id="copyBtn">결과 복사 (탭 구분)</button>
+      <button class="primary" id="downloadBtn">LABEL_DATA.xlsx 다운로드</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  const RULESETS_KEY = "label_data_rulesets_v1";
+  const DATASET_KEY = "label_data_rows_v2";
+  const YELLOW_MIN_LEN = 40;
+  const REMOTE_API_URL = "https://script.google.com/macros/s/AKfycbzvNqKyDeDGjbpowiTxOwJQcMtK-uXbCogAMswc0viVByru5WKt2hcCqsi9VM9-Jh2jtg/exec";
+  let remoteAvailable = true; // 원격 저장소(구글 시트) 연결 성공 여부 — 실패 시 자동으로 로컬 저장만 사용
+
+  const COLS = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q'];
+  const COL_LABELS = {
+    A:'마스터 넘버', B:'바코드 카테고리', C:'출력 수량', D:'바코드 타입', E:'바코드 프린터 ID',
+    F:'바코드 설명', G:'파트넘버', H:'컴포넌트 넘버', I:'컴포넌트 설명1(윗줄)', J:'컴포넌트 설명2(아랫줄)',
+    K:'rating값', L:'컴포넌트 수량', M:'UOM', N:'Global code', O:'PNTSTD', P:'PNTSTEER', Q:'COO'
+  };
+
+  const DEFAULT_RULESETS = [
+    { id:'campus1_spare', name:'Campus 1 - 스페어',
+      perItem: { b:2,c:1,d:7,e:9,f:'스페어구성품',n:'C100', gMode:'pn' },
+      perRecord: { b:0,c:1,d:8,e:15,f:'스페어 포장 BOX',n:'C100',q:'Made in Korea', gMode:'pn' },
+      manualTypes: [] },
+    { id:'campus2_spare', name:'Campus 2 - 스페어',
+      perItem: { b:2,c:1,d:7,e:7,f:'스페어구성품',n:'C100', gMode:'pn' },
+      perRecord: { b:0,c:1,d:8,e:6,f:'스페어 포장 BOX',n:'C100',q:'Made in Korea', gMode:'pn' },
+      manualTypes: [] },
+  ];
+
+  // 예전 저장 형식(comp/box)을 새 형식(perItem/perRecord/manualTypes)으로 변환 — 기존 구글시트 데이터 호환용
+  function migrateRuleset(rs){
+    if (rs.perItem) { rs.manualTypes = rs.manualTypes || []; return rs; }
+    return {
+      id: rs.id, name: rs.name,
+      perItem: { b:rs.comp.b, c:rs.comp.c, d:rs.comp.d, e:rs.comp.e, f:rs.comp.f, n:rs.comp.n, gMode:'pn' },
+      perRecord: rs.box ? { b:rs.box.b, c:rs.box.c, d:rs.box.d, e:rs.box.e, f:rs.box.f, n:rs.box.n, q:rs.box.q, gMode:'pn' } : null,
+      manualTypes: []
+    };
+  }
+  function migrateRecord(d){
+    if (d.perItem) { d.manualRows = d.manualRows || []; return d; }
+    const migrated = Object.assign({}, d, {
+      perItem: { b:d.comp.b, c:d.comp.c, d:d.comp.d, e:d.comp.e, f:d.comp.f, n:d.comp.n, gMode:'pn' },
+      perRecord: d.box ? { b:d.box.b, c:d.box.c, d:d.box.d, e:d.box.e, f:d.box.f, n:d.box.n, q:d.box.q, gMode:'pn' } : null,
+      manualRows: []
+    });
+    delete migrated.comp; delete migrated.box;
+    return migrated;
+  }
+
+  let rulesets = [];
+  let selectedRulesetId = null;
+  let editingRuleId = null;   // null = adding new
+  let queue = [];
+  let dataset = [];
+  let logLines = [];
+  let idCounter = 0;
+
+  const el = id => document.getElementById(id);
+  const dropzone = el('dropzone');
+  const fileInput = el('fileInput');
+  const fileListEl = el('fileList');
+  const processBtn = el('processBtn');
+  const clearQueueBtn = el('clearQueueBtn');
+  const summaryEl = el('summary');
+  const logEl = el('log');
+  const pnChipsEl = el('pnChips');
+  const resultTableEl = el('resultTable');
+  const downloadBar = el('downloadBar');
+  const downloadBtn = el('downloadBtn');
+  const copyBtn = el('copyBtn');
+  const resetBtn = el('resetBtn');
+  const statPN = el('statPN'), statRows = el('statRows'), statHi = el('statHi');
+  const downloadCount = el('downloadCount'), downloadRows = el('downloadRows');
+  const toastEl = el('toast');
+  const rulesetListEl = el('rulesetList');
+  const ruleForm = el('ruleForm');
+  const addRuleBtn = el('addRuleBtn');
+  const refreshBtn = el('refreshBtn');
+
+  function toast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    setTimeout(()=>toastEl.classList.remove('show'), 2200);
+  }
+  function escXml(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/\r\n/g,'\n');
+  }
+  function escapeHtml(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function clean(v){
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'string') { const t = v.trim(); return t.length ? t : null; }
+    return v;
+  }
+  function formatUploadTime(ts){
+    if (!ts) return '-';
+    const dt = new Date(ts);
+    const pad = n => String(n).padStart(2,'0');
+    return `${dt.getFullYear()}-${pad(dt.getMonth()+1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+  }
+  function numOrStr(v){
+    if (v === '' || v === null || v === undefined) return v;
+    const n = Number(v);
+    return Number.isFinite(n) && String(n) === String(v).trim() ? n : v;
+  }
+
+  // ---------- column reference table ----------
+  (function renderColRef(){
+    let html = '<tr><th>열</th><th>이름</th></tr>';
+    COLS.forEach(c => { html += `<tr><td>${c}</td><td>${COL_LABELS[c]}</td></tr>`; });
+    el('colRefTable').innerHTML = html;
+  })();
+
+  // ---------- remote (Google Sheets via Apps Script) ----------
+  async function remoteGet(){
+    const res = await fetch(REMOTE_API_URL);
+    if (!res.ok) throw new Error('원격 저장소 응답 오류 (' + res.status + ')');
+    return res.json();
+  }
+  async function remotePost(payload){
+    const res = await fetch(REMOTE_API_URL, { method: 'POST', body: JSON.stringify(payload) });
+    if (!res.ok) throw new Error('원격 저장소 응답 오류 (' + res.status + ')');
+    return res.json();
+  }
+  async function upsertRemoteRecord(record){
+    if (!remoteAvailable) return;
+    try { await remotePost({ action: 'upsertRecord', record }); }
+    catch(e){ console.error('remote upsertRecord failed', e); toast('공유 저장소 저장 실패 (네트워크 확인 필요)'); }
+  }
+  async function deleteRemoteRecord(pn){
+    if (!remoteAvailable) return;
+    try { await remotePost({ action: 'deleteRecord', pn }); }
+    catch(e){ console.error('remote deleteRecord failed', e); toast('공유 저장소 삭제 실패 (네트워크 확인 필요)'); }
+  }
+  async function saveRemoteRulesets(){
+    if (!remoteAvailable) return;
+    try { await remotePost({ action: 'saveRulesets', rulesets }); }
+    catch(e){ console.error('remote saveRulesets failed', e); toast('공유 저장소 규칙 저장 실패 (네트워크 확인 필요)'); }
+  }
+
+  // ---------- persistence ----------
+  async function loadState(){
+    let remoteData = null;
+    try {
+      remoteData = await remoteGet();
+      remoteAvailable = true;
+    } catch(e){
+      remoteAvailable = false;
+      console.error('remote load failed, falling back to local storage', e);
+    }
+
+    if (remoteData) {
+      rulesets = (Array.isArray(remoteData.rulesets) ? remoteData.rulesets : []).map(migrateRuleset);
+      dataset = (Array.isArray(remoteData.dataset) ? remoteData.dataset : []).map(migrateRecord);
+    } else {
+      try {
+        const res = await window.storage.get(RULESETS_KEY, false);
+        rulesets = (res && res.value ? JSON.parse(res.value) : []).map(migrateRuleset);
+      } catch(e){ rulesets = []; }
+      try {
+        const res2 = await window.storage.get(DATASET_KEY, false);
+        dataset = (res2 && res2.value ? JSON.parse(res2.value) : []).map(migrateRecord);
+      } catch(e){ dataset = []; }
+    }
+
+    if (!rulesets.length) {
+      rulesets = DEFAULT_RULESETS.map(r => JSON.parse(JSON.stringify(r)));
+      await saveRulesets();
+    }
+    selectedRulesetId = rulesets[0].id;
+
+    if (!remoteAvailable) toast('공유 저장소에 연결하지 못해 이 브라우저에만 저장됩니다');
+
+    renderRulesets();
+    renderSummary();
+  }
+  async function saveRulesets(){
+    try { await window.storage.set(RULESETS_KEY, JSON.stringify(rulesets), false); }
+    catch(e){ /* window.storage 미지원 환경(일반 브라우저)에서는 무시 */ }
+    saveRemoteRulesets(); // 백그라운드 동기화 (화면 반영을 기다리지 않음)
+  }
+  async function saveDataset(){
+    try { await window.storage.set(DATASET_KEY, JSON.stringify(dataset), false); }
+    catch(e){ /* window.storage 미지원 환경(일반 브라우저)에서는 무시 */ }
+  }
+
+  // ---------- ruleset manager UI ----------
+  function renderRulesets(){
+    rulesetListEl.innerHTML = '';
+    rulesets.forEach(rs=>{
+      const row = document.createElement('div');
+      row.className = 'ruleset-row' + (rs.id === selectedRulesetId ? ' selected' : '');
+      row.innerHTML = `
+        <label>
+          <input type="radio" name="rsPick" value="${rs.id}" ${rs.id===selectedRulesetId?'checked':''}>
+          <span>
+            <div class="name">${escapeHtml(rs.name)}</div>
+            <div class="meta">구성품 E=${rs.perItem.e}${rs.perRecord ? ' / 박스 E='+rs.perRecord.e : ' (박스 없음)'} · D=${rs.perItem.d}${rs.perRecord ? '/'+rs.perRecord.d : ''}${(rs.manualTypes&&rs.manualTypes.length) ? ' · 수동유형 '+rs.manualTypes.length+'개' : ''}</div>
+          </span>
+        </label>
+        <div class="btns">
+          <button data-act="edit" data-id="${rs.id}">수정</button>
+          <button data-act="del" data-id="${rs.id}" class="danger">삭제</button>
+        </div>`;
+      rulesetListEl.appendChild(row);
+    });
+    rulesetListEl.querySelectorAll('input[name=rsPick]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{ selectedRulesetId = inp.value; renderRulesets(); });
+    });
+    rulesetListEl.querySelectorAll('button[data-act=edit]').forEach(btn=>{
+      btn.addEventListener('click', ()=> openRuleForm(btn.dataset.id));
+    });
+    rulesetListEl.querySelectorAll('button[data-act=del]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        if (rulesets.length <= 1) { alert('최소 1개의 규칙은 남아있어야 합니다.'); return; }
+        if (!confirm('이 규칙을 삭제할까요? 이미 처리된 데이터에는 영향이 없습니다.')) return;
+        rulesets = rulesets.filter(r=>r.id !== btn.dataset.id);
+        if (selectedRulesetId === btn.dataset.id) selectedRulesetId = rulesets[0].id;
+        await saveRulesets();
+        renderRulesets();
+      });
+    });
+  }
+
+  let manualTypeIdCounter = 0;
+  let currentManualTypes = []; // 규칙 편집창에서 편집 중인 수동 유형 목록
+  let expandedManualDi = new Set();   // "라벨 관리" 펼쳐진 파트넘버(dataset index) 목록
+  let openManualFormKey = null;       // 현재 입력 폼이 열려있는 "di:templateId"
+
+  function manualTypeBlockHtml(mt){
+    const fieldChecked = col => mt.fields.some(f=>f.col===col) ? 'checked' : '';
+    const fieldLabel = col => { const f = mt.fields.find(f=>f.col===col); return f ? f.label : ''; };
+    return `
+    <div class="manual-type-block" data-mtid="${mt._uid}">
+      <div class="mt-head">
+        <input type="text" class="mt-label" placeholder="유형 이름 (예: 시리얼바코드)" value="${escapeHtml(mt.label||'')}">
+        <button class="mt-remove" type="button">삭제</button>
+      </div>
+      <div class="grid" style="margin-bottom:8px;">
+        <div><label class="field">버튼 문구</label><input type="text" class="mt-buttonLabel" value="${escapeHtml(mt.buttonLabel||'')}" placeholder="예: 시리얼바코드 생성"></div>
+        <div><label class="field">바코드 카테고리 (B)</label><input class="mt-b" value="${mt.b}"></div>
+        <div><label class="field">출력 수량 (C) 기본값</label><input class="mt-c" value="${mt.c}"></div>
+        <div><label class="field">바코드 타입 (D)</label><input class="mt-d" value="${mt.d}"></div>
+        <div><label class="field">프린터 아이디 (E)</label><input class="mt-e" value="${mt.e}"></div>
+        <div><label class="field">바코드 설명 (F)</label><input type="text" class="mt-f" value="${escapeHtml(mt.f||'')}"></div>
+        <div><label class="field">Global code (N)</label><input class="mt-n" value="${mt.n}"></div>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:8px;">
+        <input type="checkbox" class="mt-gmode" ${mt.gMode==='pn'?'checked':''} style="width:auto;"> G열(파트넘버)에 마스터 넘버 자동 입력
+      </label>
+      <div class="grp-title" style="margin-bottom:4px;">생성할 때 사람이 입력해야 하는 항목</div>
+      <div class="field-toggle"><input type="checkbox" class="mt-field-A" ${fieldChecked('A')}> A열 <input type="text" class="mt-field-A-label" placeholder="라벨 (예: 안테나 PST 품번)" value="${escapeHtml(fieldLabel('A'))}"></div>
+      <div class="field-toggle"><input type="checkbox" class="mt-field-C" ${fieldChecked('C')}> C열(출력 수량, 그때그때 변경) <input type="text" class="mt-field-C-label" placeholder="라벨" value="${escapeHtml(fieldLabel('C'))}"></div>
+      <div class="field-toggle"><input type="checkbox" class="mt-field-I" ${fieldChecked('I')}> I열 <input type="text" class="mt-field-I-label" placeholder="라벨 (예: 모델 설명)" value="${escapeHtml(fieldLabel('I'))}"></div>
+      <div class="field-toggle"><input type="checkbox" class="mt-field-K" ${fieldChecked('K')}> K열 <input type="text" class="mt-field-K-label" placeholder="라벨 (예: 전압/전류 정보)" value="${escapeHtml(fieldLabel('K'))}"></div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-top:6px;">
+        <input type="checkbox" class="mt-increment" ${mt.incrementField?'checked':''} style="width:auto;"> 버튼 누를 때마다 J·K열에 번호 자동 증가 (예: IN BOX #1, #2...)
+      </label>
+      <input type="text" class="mt-increment-prefix" style="margin-top:4px;" placeholder="접두어 (예: IN BOX #)" value="${escapeHtml(mt.incrementField ? mt.incrementField.prefix : '')}">
+    </div>`;
+  }
+
+  function renderManualTypeList(){
+    el('rf_manualList').innerHTML = currentManualTypes.map(manualTypeBlockHtml).join('');
+    el('rf_manualList').querySelectorAll('.mt-remove').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const uid = btn.closest('.manual-type-block').dataset.mtid;
+        currentManualTypes = currentManualTypes.filter(m=>String(m._uid)!==uid);
+        renderManualTypeList();
+      });
+    });
+  }
+  el('rf_addManual').addEventListener('click', ()=>{
+    currentManualTypes.push({ _uid: ++manualTypeIdCounter, label:'', buttonLabel:'', b:0,c:1,d:1,e:1,f:'',n:'C100', gMode:'pn', fields:[], incrementField:null });
+    renderManualTypeList();
+  });
+
+  function readManualTypesFromForm(){
+    const blocks = Array.from(el('rf_manualList').querySelectorAll('.manual-type-block'));
+    return blocks.map(block=>{
+      const fields = [];
+      ['A','C','I','K'].forEach(col=>{
+        const chk = block.querySelector('.mt-field-'+col);
+        if (chk && chk.checked) {
+          const labelInput = block.querySelector('.mt-field-'+col+'-label');
+          fields.push({ col, label: (labelInput.value.trim() || (col+'열 값')) });
+        }
+      });
+      const incChecked = block.querySelector('.mt-increment').checked;
+      const incPrefix = block.querySelector('.mt-increment-prefix').value.trim();
+      return {
+        id: 'mt_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        label: block.querySelector('.mt-label').value.trim(),
+        buttonLabel: block.querySelector('.mt-buttonLabel').value.trim(),
+        b: numOrStr(block.querySelector('.mt-b').value),
+        c: numOrStr(block.querySelector('.mt-c').value),
+        d: numOrStr(block.querySelector('.mt-d').value),
+        e: numOrStr(block.querySelector('.mt-e').value),
+        f: block.querySelector('.mt-f').value,
+        n: block.querySelector('.mt-n').value,
+        gMode: block.querySelector('.mt-gmode').checked ? 'pn' : 'blank',
+        fields,
+        incrementField: incChecked ? { cols:['J','K'], prefix: incPrefix || '#' } : null
+      };
+    });
+  }
+
+  function openRuleForm(ruleId){
+    editingRuleId = ruleId || null;
+    const rs = ruleId ? rulesets.find(r=>r.id===ruleId) : null;
+    el('ruleFormTitle').textContent = rs ? ('규칙 수정: ' + rs.name) : '새 규칙 추가';
+    el('rf_name').value = rs ? rs.name : '';
+    const c = rs ? rs.perItem : {b:2,c:1,d:7,e:9,f:'스페어구성품',n:'C100', gMode:'pn'};
+    const hasBox = rs ? !!rs.perRecord : true;
+    const b = (rs && rs.perRecord) ? rs.perRecord : {b:0,c:1,d:8,e:15,f:'스페어 포장 BOX',n:'C100',q:'Made in Korea', gMode:'pn'};
+    el('rf_comp_b').value = c.b; el('rf_comp_c').value = c.c; el('rf_comp_d').value = c.d;
+    el('rf_comp_e').value = c.e; el('rf_comp_f').value = c.f; el('rf_comp_n').value = c.n;
+    el('rf_comp_g').checked = c.gMode !== 'blank';
+    el('rf_box_enabled').checked = hasBox;
+    el('rf_box_fields').style.display = hasBox ? 'grid' : 'none';
+    el('rf_box_b').value = b.b; el('rf_box_c').value = b.c; el('rf_box_d').value = b.d;
+    el('rf_box_e').value = b.e; el('rf_box_f').value = b.f; el('rf_box_n').value = b.n; el('rf_box_q').value = b.q;
+
+    currentManualTypes = ((rs && rs.manualTypes) || []).map(mt => Object.assign({}, mt, { _uid: ++manualTypeIdCounter }));
+    renderManualTypeList();
+
+    ruleForm.classList.add('open');
+    ruleForm.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+  addRuleBtn.addEventListener('click', ()=> openRuleForm(null));
+  el('rf_cancel').addEventListener('click', ()=> ruleForm.classList.remove('open'));
+  el('rf_box_enabled').addEventListener('change', ()=>{
+    el('rf_box_fields').style.display = el('rf_box_enabled').checked ? 'grid' : 'none';
+  });
+  el('rf_save').addEventListener('click', async ()=>{
+    const name = el('rf_name').value.trim();
+    if (!name) { alert('규칙 이름을 입력해주세요.'); return; }
+    const newRule = {
+      id: editingRuleId || ('rule_' + Date.now()),
+      name,
+      perItem: {
+        b: numOrStr(el('rf_comp_b').value), c: numOrStr(el('rf_comp_c').value), d: numOrStr(el('rf_comp_d').value),
+        e: numOrStr(el('rf_comp_e').value), f: el('rf_comp_f').value, n: el('rf_comp_n').value,
+        gMode: el('rf_comp_g').checked ? 'pn' : 'blank'
+      },
+      perRecord: el('rf_box_enabled').checked ? {
+        b: numOrStr(el('rf_box_b').value), c: numOrStr(el('rf_box_c').value), d: numOrStr(el('rf_box_d').value),
+        e: numOrStr(el('rf_box_e').value), f: el('rf_box_f').value, n: el('rf_box_n').value, q: el('rf_box_q').value,
+        gMode: 'pn'
+      } : null,
+      manualTypes: readManualTypesFromForm()
+    };
+    if (editingRuleId) {
+      const idx = rulesets.findIndex(r=>r.id===editingRuleId);
+      rulesets[idx] = newRule;
+    } else {
+      rulesets.push(newRule);
+      selectedRulesetId = newRule.id;
+    }
+    await saveRulesets();
+    ruleForm.classList.remove('open');
+    renderRulesets();
+    toast('규칙이 저장되었습니다');
+  });
+
+  // ---------- file queue UI ----------
+  function renderQueue(){
+    fileListEl.innerHTML = '';
+    queue.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'file-row';
+      row.innerHTML = `<span class="name">${escapeHtml(item.file.name)}</span>
+        <span style="display:flex; align-items:center; gap:10px;">
+          <span class="status ${item.status==='error'?'err':(item.status==='done'?'ok':'')}">${item.statusText||'대기 중'}</span>
+          <button data-id="${item.id}" class="rm">삭제</button>
+        </span>`;
+      fileListEl.appendChild(row);
+    });
+    fileListEl.querySelectorAll('.rm').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        queue = queue.filter(q => String(q.id) !== btn.dataset.id);
+        renderQueue(); updateButtons();
+      });
+    });
+    clearQueueBtn.style.display = queue.length ? 'inline-block' : 'none';
+  }
+  function updateButtons(){ processBtn.disabled = queue.length === 0; }
+  function addFiles(fileArr){
+    Array.from(fileArr).forEach(f=>{
+      if (!f.name.toLowerCase().endsWith('.xlsx')) return;
+      queue.push({file:f, id: ++idCounter, status:'pending', statusText:'대기 중'});
+    });
+    renderQueue(); updateButtons();
+  }
+  dropzone.addEventListener('click', ()=> fileInput.click());
+  dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e=>{ e.preventDefault(); dropzone.classList.remove('drag'); addFiles(e.dataTransfer.files); });
+  fileInput.addEventListener('change', e=>{ addFiles(e.target.files); fileInput.value=''; });
+  clearQueueBtn.addEventListener('click', ()=>{ queue = []; renderQueue(); updateButtons(); });
+
+  // ---------- parsing a packing list workbook ----------
+  function parsePackingList(workbook){
+    const sheetName = workbook.SheetNames[0];
+    const ws = workbook.Sheets[sheetName];
+    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
+    function cellv(addr){ const c = ws[addr]; return c ? c.v : null; }
+    function labelAt(rowIdx1based){ return clean(cellv('A'+rowIdx1based)); }
+    function normLabel(v){ return v ? String(v).trim().toUpperCase().replace(/\.$/,'') : ''; }
+
+    // find label rows by scanning column A, rather than assuming fixed row numbers
+    let pnRow = null, pnameRow = null, headerRow = null;
+    for (let r = range.s.r + 1; r <= range.e.r + 1; r++) {
+      const label = normLabel(labelAt(r));
+      if (label === 'PART NUMBER' && pnRow === null) pnRow = r;
+      else if (label === 'PART NAME' && pnameRow === null) pnameRow = r;
+      else if (label === 'NO' && headerRow === null) { headerRow = r; break; } // header row found, stop scanning
+    }
+    if (pnRow === null) throw new Error('"PART NUMBER" 라벨을 찾을 수 없습니다 (A열 확인 필요)');
+    if (headerRow === null) throw new Error('"no." 헤더 행을 찾을 수 없습니다 (A열 확인 필요)');
+
+    const pn = clean(cellv('C'+pnRow));
+    const pname = pnameRow !== null ? clean(cellv('C'+pnameRow)) : null;
+    if (!pn) throw new Error('PART NUMBER 값이 비어 있습니다 (' + pnRow + '행 C열 확인)');
+
+    const items = [];
+    let r = headerRow + 1;
+    while (true) {
+      const no = cellv('A'+r);
+      if (no === null || no === undefined || no === '') break;
+      let desc = clean(cellv('F'+r));
+      const spec = clean(cellv('I'+r));
+      let specMerged = false;
+      if (spec) {
+        const alreadyIncluded = desc && desc.toLowerCase().indexOf(String(spec).toLowerCase()) !== -1;
+        if (!alreadyIncluded) { desc = desc ? (desc + '_' + spec) : spec; specMerged = true; }
+      }
+      items.push({
+        comp: clean(cellv('E'+r)),
+        desc: desc,
+        qty: cellv('G'+r),
+        uom: clean(cellv('H'+r)),
+        remark: clean(cellv('J'+r)),
+        specMerged: specMerged,
+      });
+      r++;
+    }
+    if (items.length === 0) throw new Error('구성품 데이터를 찾지 못했습니다 (' + (headerRow+1) + '행부터 확인)');
+    return {pn, pname, items};
+  }
+
+  // ---------- processing ----------
+  processBtn.addEventListener('click', async ()=>{
+    processBtn.disabled = true;
+    const rs = rulesets.find(r=>r.id===selectedRulesetId);
+    const batchTime = Date.now();
+    for (const item of queue) {
+      item.statusText = '처리 중...'; renderQueue();
+      try {
+        const buf = await item.file.arrayBuffer();
+        const wb = XLSX.read(new Uint8Array(buf), {type:'array'});
+        const parsed = parsePackingList(wb);
+        const record = { pn: parsed.pn, pname: parsed.pname, items: parsed.items,
+          rulesetId: rs.id, rulesetName: rs.name, uploadedAt: batchTime,
+          perItem: JSON.parse(JSON.stringify(rs.perItem)),
+          perRecord: rs.perRecord ? JSON.parse(JSON.stringify(rs.perRecord)) : null,
+          manualTypesSnapshot: JSON.parse(JSON.stringify(rs.manualTypes || [])),
+          manualRows: [] };
+
+        const existingIdx = dataset.findIndex(d => d.pn === parsed.pn);
+        if (existingIdx >= 0) {
+          const proceed = confirm(
+            `"${parsed.pn}" 마스터 넘버는 이미 처리되어 있습니다.\n` +
+            `계속하면 기존에 입력된 내용이 삭제되고 새 파일 내용으로 교체됩니다.\n계속할까요?`
+          );
+          if (!proceed) {
+            item.status = 'error'; item.statusText = '건너뜀 (중복, 취소함)';
+            logLines.push({type:'warn', text: `${parsed.pn} : 중복 확인에서 취소되어 건너뛰었습니다`});
+            renderQueue();
+            continue;
+          }
+          dataset[existingIdx] = record;
+          logLines.push({type:'warn', text: `${parsed.pn} : 기존 데이터를 삭제하고 [${rs.name}] 규칙으로 새로 교체했습니다 (${parsed.items.length}건)`});
+        } else {
+          dataset.push(record);
+          logLines.push({type:'ok', text: `${parsed.pn} : [${rs.name}] 규칙으로 ${parsed.items.length}건 처리 완료`});
+        }
+        upsertRemoteRecord(record); // 백그라운드로 동기화 (화면 반영을 기다리지 않음)
+        item.status = 'done'; item.statusText = '완료';
+      } catch(err) {
+        item.status = 'error'; item.statusText = '오류: ' + err.message;
+        logLines.push({type:'err', text: `${item.file.name} : ${err.message}`});
+      }
+      renderQueue();
+    }
+    queue = queue.filter(q => q.status !== 'done');
+    renderQueue(); updateButtons();
+    await saveDataset();
+    renderSummary();
+    toast('처리가 끝났습니다');
+  });
+
+  // ---------- build normalized row objects (used by table, copy, xlsx) ----------
+  function buildRowObjects(){
+    const rows = [];
+    dataset.forEach((d, di)=>{
+      const p = d.perItem;
+      d.items.forEach((it, ii)=>{
+        rows.push({
+          A:d.pn, B:p.b, C:p.c, D:p.d, E:p.e, F:p.f,
+          G: (it.gOverride !== undefined && it.gOverride !== null) ? it.gOverride : (p.gMode==='pn' ? d.pn : null),
+          H:it.comp, I:it.desc, J:it.remark, K:null, L:it.qty, M:it.uom, N:p.n, O:null, P:null, Q:null,
+          _hiI: !!(it.desc && it.desc.length >= YELLOW_MIN_LEN),
+          _hiJ: !!(it.remark && it.remark.length >= YELLOW_MIN_LEN),
+          _specMerged: !!it.specMerged,
+          _di: di, _ii: ii
+        });
+      });
+      if (d.perRecord) {
+        const b = d.perRecord;
+        rows.push({
+          A:d.pn, B:b.b, C:b.c, D:b.d, E:b.e, F:b.f, G: b.gMode==='pn' ? d.pn : null,
+          H:null, I:d.pname, J:null, K:null, L:null, M:null, N:b.n, O:null, P:null, Q:b.q,
+          _hiI: !!(d.pname && d.pname.length >= YELLOW_MIN_LEN),
+          _hiJ: false,
+          _di: di, _ii: 'box'
+        });
+      }
+      (d.manualRows || []).forEach((mr, mi)=>{
+        rows.push(Object.assign({}, mr.values, { _hiI:false, _hiJ:false, _di:di, _ii:'manual:'+mi, _manual:true, _manualTemplateId: mr.templateId }));
+      });
+    });
+    return rows;
+  }
+
+  // ---------- shorten-suggestion panel ----------
+  const shortenCard = el('shortenCard');
+  const shortenListEl = el('shortenList');
+
+  function getFieldValue(di, ii, field){
+    if (ii === 'box') return field === 'I' ? dataset[di].pname : null;
+    return field === 'I' ? dataset[di].items[ii].desc : dataset[di].items[ii].remark;
+  }
+  function setFieldValue(di, ii, field, val){
+    if (ii === 'box') { dataset[di].pname = val; return; }
+    if (field === 'I') {
+      dataset[di].items[ii].desc = val;
+      dataset[di].items[ii].specMerged = false; // 사용자가 값을 확인/적용했으므로 "SPEC 자동 병합" 재검토 표시는 해제
+    } else {
+      dataset[di].items[ii].remark = val;
+    }
+  }
+
+  // ---------- manual row generation (시리얼바코드/CE인증/안테나시리얼/IN BOX 라벨 등) ----------
+  function generateManualRow(di, templateId, fieldValues){
+    const record = dataset[di];
+    const tpl = (record.manualTypesSnapshot || []).find(t => t.id === templateId);
+    if (!tpl) return null;
+    const fieldCols = (tpl.fields || []).map(f => f.col);
+    const values = {
+      A: fieldCols.includes('A') ? fieldValues.A : record.pn,
+      B: tpl.b,
+      C: fieldCols.includes('C') ? (fieldValues.C !== undefined && fieldValues.C !== '' ? numOrStr(fieldValues.C) : tpl.c) : tpl.c,
+      D: tpl.d, E: tpl.e, F: tpl.f,
+      G: tpl.gMode === 'pn' ? record.pn : null,
+      H: null,
+      I: fieldCols.includes('I') ? fieldValues.I : null,
+      J: null,
+      K: fieldCols.includes('K') ? fieldValues.K : null,
+      L: null, M: null, N: tpl.n, O: null, P: null, Q: null
+    };
+    if (tpl.incrementField) {
+      const countSoFar = (record.manualRows || []).filter(mr => mr.templateId === templateId).length;
+      const nextLabel = tpl.incrementField.prefix + (countSoFar + 1);
+      tpl.incrementField.cols.forEach(c => {
+        const v = fieldValues[c];
+        values[c] = (v !== undefined && v !== null && String(v).trim() !== '') ? v : nextLabel;
+      });
+    }
+    record.manualRows = record.manualRows || [];
+    record.manualRows.push({ templateId, values });
+    return values;
+  }
+
+  function manualFormHtml(d, di, tpl){
+    let html = `<div class="manual-gen-form" data-di="${di}" data-tid="${tpl.id}" style="border:1px dashed var(--line); border-radius:8px; padding:10px; margin-bottom:10px; background:#fff;">`;
+    html += `<div style="font-size:12.5px; font-weight:600; margin-bottom:8px;">${escapeHtml(tpl.label)} 입력</div>`;
+    tpl.fields.forEach(f=>{
+      html += `<div style="margin-bottom:8px;">
+        <label class="field">${escapeHtml(f.label)}<span class="required-star">*</span></label>
+        <input type="text" class="manual-field-input required-field" data-col="${f.col}" placeholder="필수 입력">
+      </div>`;
+    });
+    if (tpl.incrementField) {
+      const countSoFar = (d.manualRows||[]).filter(mr=>mr.templateId===tpl.id).length;
+      const preview = tpl.incrementField.prefix + (countSoFar+1);
+      html += `<div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">J·K열 자동 값: <b>${escapeHtml(preview)}</b> (아래에서 수정 가능)</div>
+      <div style="margin-bottom:8px;"><label class="field">J·K열 값 (직접 수정 가능)</label>
+      <input type="text" class="manual-field-input" data-col="__increment" value="${escapeHtml(preview)}"></div>`;
+    }
+    html += `<div style="display:flex; gap:8px;">
+      <button class="primary small manual-form-confirm" data-di="${di}" data-tid="${tpl.id}">생성</button>
+      <button class="ghost small manual-form-cancel">취소</button>
+    </div></div>`;
+    return html;
+  }
+
+  function manualPanelHtml(d, di){
+    const types = d.manualTypesSnapshot || [];
+    let html = '<div style="padding:10px 4px;">';
+    if (!types.length) {
+      html += '<div style="font-size:12.5px; color:var(--ink-soft);">이 규칙에는 수동 생성 유형이 없습니다.</div>';
+    } else {
+      html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">';
+      types.forEach(tpl=>{
+        html += `<button class="secondary small manual-gen-btn" data-di="${di}" data-tid="${tpl.id}">${escapeHtml(tpl.buttonLabel || tpl.label)}</button>`;
+      });
+      html += '</div>';
+      const openTpl = types.find(t => openManualFormKey === (di+':'+t.id));
+      if (openTpl) html += manualFormHtml(d, di, openTpl);
+    }
+    const existing = d.manualRows || [];
+    if (existing.length) {
+      html += '<div style="font-size:11.5px; font-weight:600; color:var(--ink-soft); margin:10px 0 4px;">생성된 라벨</div>';
+      html += '<table style="width:100%; font-size:12px; border-collapse:collapse;">';
+      existing.forEach((mr, mi)=>{
+        const tpl = types.find(t=>t.id===mr.templateId);
+        const summary = ['A','I','J','K'].map(c=>mr.values[c]).filter(Boolean).join(' · ');
+        html += `<tr><td style="padding:3px 6px; color:var(--ink-soft);">${escapeHtml(tpl?tpl.label:mr.templateId)}</td><td style="padding:3px 6px;">${escapeHtml(summary)}</td><td style="text-align:right;"><button class="ghost small manual-row-del" data-di="${di}" data-mi="${mi}">삭제</button></td></tr>`;
+      });
+      html += '</table>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function wireManualPanelEvents(){
+    pnChipsEl.querySelectorAll('.manual-gen-btn').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const di = Number(btn.dataset.di), tid = btn.dataset.tid;
+        const key = di+':'+tid;
+        openManualFormKey = (openManualFormKey === key) ? null : key;
+        renderSummary();
+      });
+    });
+    pnChipsEl.querySelectorAll('.manual-form-cancel').forEach(btn=>{
+      btn.addEventListener('click', ()=>{ openManualFormKey = null; renderSummary(); });
+    });
+    pnChipsEl.querySelectorAll('.manual-form-confirm').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const di = Number(btn.dataset.di), tid = btn.dataset.tid;
+        const formEl = btn.closest('.manual-gen-form');
+        const inputs = Array.from(formEl.querySelectorAll('.manual-field-input'));
+        const fieldValues = {};
+        let missing = false;
+        inputs.forEach(inp=>{
+          const col = inp.dataset.col;
+          const val = inp.value.trim();
+          if (col === '__increment') {
+            fieldValues.J = val; fieldValues.K = val;
+          } else {
+            fieldValues[col] = val;
+            if (!val) missing = true;
+          }
+        });
+        if (missing) { toast('필수 항목을 모두 입력해주세요'); return; }
+        generateManualRow(di, tid, fieldValues);
+        await saveDataset();
+        openManualFormKey = null;
+        renderSummary();
+        toast('라벨이 생성되었습니다');
+        upsertRemoteRecord(dataset[di]); // 백그라운드 동기화
+      });
+    });
+    pnChipsEl.querySelectorAll('.manual-row-del').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const di = Number(btn.dataset.di), mi = Number(btn.dataset.mi);
+        if (!confirm('이 라벨을 삭제할까요?')) return;
+        dataset[di].manualRows.splice(mi,1);
+        await saveDataset();
+        renderSummary();
+        toast('삭제되었습니다');
+        upsertRemoteRecord(dataset[di]); // 백그라운드 동기화
+      });
+    });
+  }
+
+  function renderShortenPanel(rows){
+    let flagged = [];
+    rows.forEach(r=>{
+      const reasonsI = [];
+      if (r._hiI) reasonsI.push({cls:'over40', label:'40자 초과'});
+      if (r._specMerged) reasonsI.push({cls:'specmerged', label:'SPEC 자동 병합'});
+      if (reasonsI.length) flagged.push({di:r._di, ii:r._ii, field:'I', pn:r.A, comp: r._ii==='box' ? '(박스 라벨)' : r.H, text: r.I, reasons: reasonsI});
+
+      if (r._hiJ) flagged.push({di:r._di, ii:r._ii, field:'J', pn:r.A, comp: r._ii==='box' ? '(박스 라벨)' : r.H, text: r.J, reasons: [{cls:'over40', label:'40자 초과'}]});
+    });
+
+    // 규칙을 적용해도 원문과 똑같고, 사유가 "40자 초과" 뿐인 항목은 검토 목록에서 제외
+    // (제안이 도움이 안 되고, 다른 이유(SPEC 병합 등)도 없으면 보여줄 필요가 없음)
+    flagged = flagged.filter(f => {
+      const fieldKind = f.field === 'J' ? 'remark' : 'desc';
+      f._suggestion = shortenField(f.text, fieldKind);
+      const onlyOver40 = f.reasons.length === 1 && f.reasons[0].cls === 'over40';
+      const noChange = f._suggestion === f.text;
+      return !(onlyOver40 && noChange);
+    });
+
+    if (flagged.length === 0) { shortenCard.style.display = 'none'; shortenListEl.innerHTML=''; return; }
+    shortenCard.style.display = 'block';
+
+    shortenListEl.innerHTML = flagged.map((f, idx)=>{
+      const fieldLabel = f.field === 'I' ? '컴포넌트 설명1(윗줄)' : '컴포넌트 설명2(아랫줄)';
+      const suggestion = f._suggestion;
+      const suggestionOver = suggestion.length >= YELLOW_MIN_LEN;
+      const tagsHtml = f.reasons.map(t=>`<span class="tag ${t.cls}">${t.label}</span>`).join('');
+      return `
+      <div class="shorten-row" data-idx="${idx}" data-di="${f.di}" data-ii="${f.ii}" data-field="${f.field}">
+        <div class="meta">
+          <span>${escapeHtml(f.pn)} · ${escapeHtml(f.comp)} · ${fieldLabel}</span>
+          <span class="tags">${tagsHtml}</span>
+        </div>
+        <div class="orig">${escapeHtml(f.text)} <span class="charcount ${f.text.length>=YELLOW_MIN_LEN?'over':''}">(${f.text.length}자)</span></div>
+        <div class="suggest-line">
+          <span class="suggest-tag">규칙 적용 제안</span>
+          <span class="suggest-text">${escapeHtml(suggestion)}</span>
+          <span class="charcount ${suggestionOver?'over':''}">(${suggestion.length}자)</span>
+          <button class="secondary small btn-select">이 제안 선택</button>
+          <button class="primary small btn-select-apply">이 제안 적용</button>
+        </div>
+        <div class="edit-row">
+          <input type="text" class="edit-input" value="${escapeHtml(f.text)}">
+          <span class="charcount"></span>
+          <button class="primary small btn-apply">적용</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    shortenListEl.querySelectorAll('.shorten-row').forEach(rowEl=>{
+      const idx = Number(rowEl.dataset.idx);
+      const f = flagged[idx];
+      const suggestion = f._suggestion;
+      const input = rowEl.querySelector('.edit-input');
+      const charEl = rowEl.querySelector('.edit-row .charcount');
+      const applyBtn = rowEl.querySelector('.btn-apply');
+      const selectBtn = rowEl.querySelector('.btn-select');
+      const selectApplyBtn = rowEl.querySelector('.btn-select-apply');
+
+      function updateCharCount(){
+        const len = input.value.length;
+        charEl.textContent = `(${len}자)`;
+        charEl.classList.toggle('over', len >= YELLOW_MIN_LEN);
+        applyBtn.disabled = input.value.trim().length === 0;
+      }
+      updateCharCount();
+      input.addEventListener('input', updateCharCount);
+
+      selectBtn.addEventListener('click', ()=>{
+        input.value = suggestion;
+        updateCharCount();
+      });
+
+      async function applyValue(val){
+        if (!val) return;
+        setFieldValue(f.di, f.ii, f.field, val);
+        await saveDataset();
+        renderSummary();
+        toast('적용되었습니다');
+        upsertRemoteRecord(dataset[f.di]); // 백그라운드 동기화
+      }
+
+      selectApplyBtn.addEventListener('click', ()=> applyValue(suggestion.trim()));
+
+      applyBtn.addEventListener('click', ()=> applyValue(input.value.trim()));
+    });
+  }
+
+
+  // ---------- rule-based abbreviation dictionary (fallback layer, applies to both fields) ----------
+  // order matters: longer/more specific phrases first, single words after
+  const ABBR_RULES = [
+    [/\s+and\s+/gi, ' & '],
+    [/\bassembly\b/gi, 'Assy'],
+    [/\bconnector\b/gi, 'Conn'],
+    [/\bethernet\b/gi, 'Eth'],
+    [/\bsensor\b/gi, 'Sens'],
+    [/\bbracket\b/gi, 'Brkt'],
+    [/\bmodule\b/gi, 'Mod'],
+    [/\bscrew\b/gi, 'Scr'],
+    [/\bwasher\b/gi, 'Wsh'],
+    [/\bstandard\b/gi, 'Std'],
+    [/\bcable\b/gi, 'Cbl'],
+    [/\badapter\b/gi, 'Adpt'],
+    [/\bharness\b/gi, 'Harn'],
+    [/\bpower\b/gi, 'Pwr'],
+    [/\binput\b/gi, 'In'],
+    [/\boutput\b/gi, 'Out'],
+    [/\bgender\b/gi, 'Gen'],
+    [/\bprotection\b/gi, 'Prot'],
+    [/\bdevice\b/gi, 'Dev'],
+    [/\bbattery\b/gi, 'Batt'],
+    [/\bterminal\b/gi, 'Term'],
+    [/\bcircuit\b/gi, 'Cct'],
+    [/\bbreaker\b/gi, 'Brk'],
+    [/\bsolid\s+state\b/gi, 'SS'],
+    [/\bspring\b/gi, 'Spg'],
+    [/\bsocket\b/gi, 'Skt'],
+    [/\bextension\b/gi, 'Ext'],
+    [/\bhexagon\b/gi, 'Hex'],
+    [/\bstainless\b/gi, 'SUS'],
+    [/\bself[\s-]?drilling\b/gi, 'SD'],
+  ];
+
+  function applyAbbrDictionary(s){
+    ABBR_RULES.forEach(([pattern, repl]) => { s = s.replace(pattern, repl); });
+    return s.replace(/\s{2,}/g, ' ').trim();
+  }
+
+  // 컴포넌트 설명1(I열) 전용 구조적 규칙 — 단축문구_study_자료 분석 기반
+  // 끝에 붙은 괄호가 "여러 단어로 된 부가설명"이면 제거하고, "짧은 브랜드/규격 표기"(공백 없음, 예: (MMW), (BUMAX))면 보존
+  function stripIncidentalTrailingParen(s){
+    return s.replace(/\s*\n?\s*\(([^)]*)\)\s*$/, (whole, inner) => /\s/.test(inner.trim()) ? '' : whole);
+  }
+
+  const DESC_STRUCTURAL_RULES = [
+    // "Modem Interface Cable (For <Brand> Modem ...)" -> "<Brand> Modem Interface Cable"
+    [/^Modem\s+Interface\s+Cable\s*\(\s*For\s+([\w\-]+)\s+Modem[^)]*\)\s*$/i, '$1 Modem Interface Cable'],
+    // 문장 형태의 부가설명 괄호만 제거 (짧은 브랜드/규격 괄호는 보존)
+    [/\s*\n?\s*\(([^)]*)\)\s*$/, (whole, inner) => /\s/.test(inner.trim()) ? '' : whole],
+  ];
+
+  // 컴포넌트 설명2/REMARK(J열) 전용 구조적 규칙
+  const REMARK_STRUCTURAL_RULES = [
+    // "<Word> Kit for ..." -> "for ..." (부품명에 이미 종류가 드러나 있어 중복 제거)
+    [/^\w+\s+Kit\s+for\s+/i, 'for '],
+    // 문장 끝의 불필요한 "Assembly" 제거
+    [/\s+Assembly\s*$/i, ''],
+    // 문장 형태의 부가설명 괄호만 제거 (짧은 브랜드/규격 괄호는 보존)
+    [/\s*\n?\s*\(([^)]*)\)\s*$/, (whole, inner) => /\s/.test(inner.trim()) ? '' : whole],
+  ];
+
+  function shortenField(original, fieldKind){
+    if (!original) return original;
+    let s = original;
+    const structuralRules = fieldKind === 'remark' ? REMARK_STRUCTURAL_RULES : DESC_STRUCTURAL_RULES;
+    for (const [pattern, repl] of structuralRules) {
+      const next = s.replace(pattern, repl).trim();
+      s = next;
+      if (s.length < YELLOW_MIN_LEN) return s;
+    }
+    if (s.length >= YELLOW_MIN_LEN) s = applyAbbrDictionary(s);
+    return s;
+  }
+
+
+  // ---------- summary / table ----------
+  function renderSummary(){
+    if (dataset.length === 0) { summaryEl.style.display = 'none'; downloadBar.style.display = 'none'; shortenCard.style.display='none'; return; }
+    summaryEl.style.display = 'block'; downloadBar.style.display = 'flex';
+
+    const rows = buildRowObjects();
+    let hiCount = 0;
+    rows.forEach(r=>{ if (r._hiI) hiCount++; if (r._hiJ) hiCount++; });
+
+    statPN.textContent = dataset.length;
+    statRows.textContent = rows.length;
+    statHi.textContent = hiCount;
+    downloadCount.textContent = dataset.length;
+    downloadRows.textContent = rows.length;
+
+    const sortedChips = dataset
+      .map((d, di) => ({ d, di }))
+      .sort((a, b) => {
+        const ta = a.d.uploadedAt || 0, tb = b.d.uploadedAt || 0;
+        if (ta !== tb) return ta - tb;
+        return a.d.pn < b.d.pn ? -1 : (a.d.pn > b.d.pn ? 1 : 0);
+      });
+    const pnTableRows = sortedChips.map(({d, di})=>{
+      const expanded = expandedManualDi.has(di);
+      const mainRow = `
+      <tr>
+        <td class="pn-cell">${escapeHtml(d.pn)}</td>
+        <td class="rs-cell">${escapeHtml(d.rulesetName)}</td>
+        <td class="time-cell">${formatUploadTime(d.uploadedAt)}</td>
+        <td class="del-cell">
+          <button class="secondary small manual-toggle" data-di="${di}">라벨 관리 ${expanded?'▴':'▾'}</button>
+          <button class="row-del" data-di="${di}" title="이 파트넘버 삭제">삭제</button>
+        </td>
+      </tr>`;
+      if (!expanded) return mainRow;
+      return mainRow + `<tr><td colspan="4" style="background:var(--paper);">${manualPanelHtml(d, di)}</td></tr>`;
+    }).join('');
+    pnChipsEl.innerHTML = `
+      <table class="pn-table">
+        <thead><tr><th>마스터 넘버</th><th>적용 규칙</th><th>업로드 시간</th><th></th></tr></thead>
+        <tbody>${pnTableRows}</tbody>
+      </table>`;
+    pnChipsEl.querySelectorAll('.manual-toggle').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const di = Number(btn.dataset.di);
+        if (expandedManualDi.has(di)) expandedManualDi.delete(di); else expandedManualDi.add(di);
+        openManualFormKey = null;
+        renderSummary();
+      });
+    });
+    wireManualPanelEvents();
+    pnChipsEl.querySelectorAll('.row-del').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const di = Number(btn.dataset.di);
+        const pn = dataset[di] ? dataset[di].pn : '';
+        if (!confirm(`"${pn}" 데이터를 삭제할까요? 그 파트넘버의 라벨 내용만 지워지고 나머지는 그대로 유지됩니다.`)) return;
+        dataset.splice(di, 1);
+        await saveDataset();
+        renderSummary();
+        toast(`"${pn}" 삭제되었습니다`);
+        deleteRemoteRecord(pn); // 백그라운드 동기화
+      });
+    });
+
+    let thead = '<thead><tr>' + COLS.map(c=>`<th>${c}<br>${COL_LABELS[c]}</th>`).join('') + '</tr></thead>';
+    let tbody = '<tbody>';
+    rows.forEach((r, ri)=>{
+      const isPerItemRow = !r._manual && r._ii !== 'box';
+      tbody += `<tr data-ri="${ri}">`;
+      COLS.forEach(c=>{
+        const v = r[c];
+        const hi = (c==='I' && r._hiI) || (c==='J' && r._hiJ);
+        if (c === 'G' && isPerItemRow) {
+          tbody += `<td class="g-editable"><input type="text" class="g-override-input" data-di="${r._di}" data-ii="${r._ii}" value="${v===null||v===undefined?'':escapeHtml(v)}" placeholder="(빈칸)"></td>`;
+        } else {
+          tbody += `<td class="${hi?'hi':''}">${v===null||v===undefined?'':escapeHtml(v)}</td>`;
+        }
+      });
+      tbody += '</tr>';
+    });
+    tbody += '</tbody>';
+    resultTableEl.innerHTML = thead + tbody;
+    resultTableEl.querySelectorAll('.g-override-input').forEach(inp=>{
+      inp.addEventListener('change', async ()=>{
+        const di = Number(inp.dataset.di), ii = Number(inp.dataset.ii);
+        const val = inp.value.trim();
+        dataset[di].items[ii].gOverride = val || null;
+        await saveDataset();
+        toast('G열이 수정되었습니다');
+        upsertRemoteRecord(dataset[di]); // 백그라운드 동기화
+      });
+    });
+
+    logEl.innerHTML = logLines.slice(-200).map(l=>{
+      const cls = l.type==='err' ? 'err' : (l.type==='warn' ? 'warn' : '');
+      return `<div class="${cls}">${escapeHtml(l.text)}</div>`;
+    }).join('');
+    logEl.scrollTop = logEl.scrollHeight;
+
+    renderShortenPanel(rows);
+  }
+
+  resetBtn.addEventListener('click', async ()=>{
+    if (!confirm('누적된 모든 데이터를 초기화할까요? 되돌릴 수 없습니다. (규칙 설정은 유지됩니다)')) return;
+    const pnsToDelete = dataset.map(d => d.pn);
+    dataset = []; logLines = [];
+    await saveDataset();
+    renderSummary();
+    toast('초기화되었습니다');
+    Promise.all(pnsToDelete.map(pn => deleteRemoteRecord(pn))); // 백그라운드 동기화
+  });
+
+  // ---------- copy as TSV ----------
+  copyBtn.addEventListener('click', async ()=>{
+    const rows = buildRowObjects();
+    let text = COLS.map(c=>COL_LABELS[c]).join('\t') + '\n';
+    rows.forEach(r=>{
+      text += COLS.map(c=>{
+        const v = r[c];
+        return v===null||v===undefined ? '' : String(v);
+      }).join('\t') + '\n';
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('결과가 클립보드에 복사되었습니다');
+    } catch(e) {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position='fixed'; ta.style.left='-9999px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('결과가 클립보드에 복사되었습니다'); }
+      catch(e2) { alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인해주세요.'); }
+      document.body.removeChild(ta);
+    }
+  });
+
+  // ---------- xlsx building (with fill styling) ----------
+  const COL_WIDTHS = {A:8.625,B:2.5,E:3.5,F:16.5,G:8.625,H:8.125,I:42.625,L:2.5,M:3.75,N:5.75,Q:14.625};
+
+  function buildSheetXml(rows){
+    let xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n';
+    xml += '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    xml += '<dimension ref="A1:Q'+Math.max(rows.length,1)+'"/>';
+    xml += '<sheetViews><sheetView workbookViewId="0"/></sheetViews>';
+    xml += '<sheetFormatPr defaultRowHeight="15"/>';
+    xml += '<cols>';
+    Object.keys(COL_WIDTHS).forEach(col=>{
+      const idx = col.charCodeAt(0) - 64;
+      xml += `<col min="${idx}" max="${idx}" width="${COL_WIDTHS[col]}" customWidth="1"/>`;
+    });
+    xml += '</cols><sheetData>';
+    rows.forEach((r, ri)=>{
+      const rr = ri + 1;
+      xml += `<row r="${rr}">`;
+      COLS.forEach(c=>{
+        const v = r[c];
+        if (v === null || v === undefined || v === '') return;
+        const ref = c + rr;
+        const hi = (c==='I' && r._hiI) || (c==='J' && r._hiJ);
+        const styleAttr = hi ? ' s="1"' : '';
+        if (typeof v === 'number') {
+          xml += `<c r="${ref}"${styleAttr}><v>${v}</v></c>`;
+        } else {
+          xml += `<c r="${ref}" t="inlineStr"${styleAttr}><is><t xml:space="preserve">${escXml(v)}</t></is></c>`;
+        }
+      });
+      xml += '</row>';
+    });
+    xml += '</sheetData></worksheet>';
+    return xml;
+  }
+  function buildStylesXml(){
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+    '<fills count="3">' +
+      '<fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill>' +
+    '</fills>' +
+    '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+    '<cellXfs count="2">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/>' +
+    '</cellXfs>' +
+    '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+    '</styleSheet>';
+  }
+  function buildWorkbookXml(){
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>';
+  }
+  async function buildXlsxBlob(){
+    const rows = buildRowObjects();
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+      '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+      '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+      '</Types>');
+    zip.folder('_rels').file('.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+      '</Relationships>');
+    const xl = zip.folder('xl');
+    xl.folder('_rels').file('workbook.xml.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+      '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+      '</Relationships>');
+    xl.file('workbook.xml', buildWorkbookXml());
+    xl.file('styles.xml', buildStylesXml());
+    xl.folder('worksheets').file('sheet1.xml', buildSheetXml(rows));
+    return await zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  }
+  downloadBtn.addEventListener('click', async ()=>{
+    downloadBtn.disabled = true; downloadBtn.textContent = '생성 중...';
+    try {
+      const blob = await buildXlsxBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'LABEL_DATA.xlsx';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    } catch(e) {
+      alert('파일 생성 중 오류가 발생했습니다: ' + e.message);
+      console.error(e);
+    }
+    downloadBtn.disabled = false; downloadBtn.textContent = 'LABEL_DATA.xlsx 다운로드';
+  });
+
+  refreshBtn.addEventListener('click', async ()=>{
+    refreshBtn.disabled = true; refreshBtn.textContent = '불러오는 중...';
+    try {
+      const remoteData = await remoteGet();
+      remoteAvailable = true;
+      rulesets = (Array.isArray(remoteData.rulesets) && remoteData.rulesets.length ? remoteData.rulesets : rulesets).map(migrateRuleset);
+      dataset = (Array.isArray(remoteData.dataset) ? remoteData.dataset : dataset).map(migrateRecord);
+      if (!rulesets.find(r=>r.id===selectedRulesetId)) selectedRulesetId = rulesets[0].id;
+      renderRulesets();
+      renderSummary();
+      toast('최신 내용을 불러왔습니다');
+    } catch(e){
+      toast('새로고침 실패 (네트워크 확인 필요)');
+    }
+    refreshBtn.disabled = false; refreshBtn.textContent = '다른 사람 작업 새로고침';
+  });
+
+  loadState();
+})();
+</script>
+</body>
+</html>
