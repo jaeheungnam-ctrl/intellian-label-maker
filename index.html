@@ -449,8 +449,8 @@
 @media(max-width:800px){.dash-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.dash-panel{padding:12px}.dash-controls h2{order:-1;width:100%;margin-bottom:8px}}
 
 </style>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -506,83 +506,99 @@
 <script>
 
 const BOARD_DEFAULT_API='https://script.google.com/macros/s/AKfycbwxBnE9j7VfeX-vwd8W-mn2tgYx5QqjD5DHVB2pp1U25WtOjOQa7MMZJmhZ0t-_H-09/exec';
-const boardSync={url:localStorage.getItem('ppe_board_api_url')||BOARD_DEFAULT_API,error:'',pending:0,dirty:false,base:new Map(),queues:new Map()};
+const boardSync={url:localStorage.getItem('ppe_board_api_url')||BOARD_DEFAULT_API,error:'',pending:0,dirty:false,base:new Map(),outbox:new Map(),loading:true,booting:true,fetching:false,sending:false,timer:null,version:1,revision:null,editVersion:0};
 function boardRemoteKey(key){if(/^ppe_tasks_/.test(key))return 'tasks';return {ppe_activity_log:'activity',ppe_models_v1:'models',ppe_users_v1:'users',ppe_checklists_v1:'checklists'}[key]||null;}
 function boardLocalKey(key,shared){return 'ppe_board_'+(shared?'data:':'device:')+key;}
-async function boardRequest(action,body){
-  const u=new URL(boardSync.url);if(u.hostname!=='script.google.com'||!/^\/macros\/s\/.+\/exec$/.test(u.pathname))throw Error('Apps Script /exec 배포 주소를 입력해 주세요.');
-  let options={redirect:'follow',signal:AbortSignal.timeout(25000)};
-  if(body){options.method='POST';options.headers={'Content-Type':'text/plain;charset=utf-8'};options.body=JSON.stringify({action,...body});}
-  else u.searchParams.set('action',action);
-  const res=await fetch(u.href,options);if(!res.ok)throw Error('공유 서버 응답 오류 '+res.status);
-  const data=await res.json();if(data.ok!==true)throw Error(data.error||'업무 공유 API가 없습니다. Code.gs를 교체하고 새 버전으로 배포해 주세요.');return data;
+async function boardRequest(action,body,query={}){
+ const u=new URL(boardSync.url);if(u.hostname!=='script.google.com'||!/^\/macros\/s\/.+\/exec$/.test(u.pathname))throw Error('Apps Script /exec 배포 주소를 입력해 주세요.');
+ const options={redirect:'follow',signal:AbortSignal.timeout(25000)};
+ if(body){options.method='POST';options.headers={'Content-Type':'text/plain;charset=utf-8'};options.body=JSON.stringify({action,...body});}
+ else{u.searchParams.set('action',action);Object.entries(query).forEach(([k,v])=>u.searchParams.set(k,v));}
+ const res=await fetch(u.href,options);if(!res.ok)throw Error('공유 서버 응답 오류 '+res.status);
+ const data=await res.json();if(data.ok!==true)throw Error(data.error||'업무 공유 API가 없습니다. Code.gs를 교체하고 새 버전으로 배포해 주세요.');return data;
 }
+function boardEntries(){return [['tasks',STORAGE_KEY],['activity',ACTIVITY_KEY],['users',USERS_KEY],['models',MODELS_KEY],['checklists',CHECKLISTS_KEY]];}
+function boardValue(name){return {tasks:TASKS,activity:ACTIVITY_LOG,users:USERS,models:MODELS,checklists:CHECKLISTS}[name];}
+function boardCompact(baseText,valueText){
+ if(baseText===null)return {base:null,value:valueText};
+ const base=JSON.parse(baseText),value=JSON.parse(valueText);
+ const keyed=a=>Array.isArray(a)&&a.every(x=>x&&typeof x.id==='string');
+ if(!keyed(base)||!keyed(value))return {base:baseText,value:valueText};
+ const bm=new Map(base.map(x=>[x.id,x])),vm=new Map(value.map(x=>[x.id,x])),before=[],after=[];
+ for(const id of new Set([...bm.keys(),...vm.keys()])){
+   const b=bm.get(id),v=vm.get(id);if(JSON.stringify(b)===JSON.stringify(v))continue;
+   if(!b){after.push(v);continue;}if(!v){before.push(b);continue;}
+   const pb={id},pv={id};for(const k of new Set([...Object.keys(b),...Object.keys(v)])){if(k==='id'||JSON.stringify(b[k])===JSON.stringify(v[k]))continue;if(k in b)pb[k]=b[k];if(k in v)pv[k]=v[k];}
+   before.push(pb);after.push(pv);
+ }
+ return {base:JSON.stringify(before),value:JSON.stringify(after)};
+}
+function queueBoardSave(name,text){boardSync.editVersion++;localStorage.setItem('ppe_board_unsent:'+name,text);boardSync.outbox.set(name,text);boardSync.pending=boardSync.outbox.size+(boardSync.sending?1:0);clearTimeout(boardSync.timer);boardSync.timer=setTimeout(flushBoardSaves,300);boardSyncStatus();}
 window.storage={mode:'local',
-  async get(key,shared){
-    const remote=shared&&boardRemoteKey(key),cached=localStorage.getItem(boardLocalKey(key,shared));
-    if(remote&&this.mode==='google'){
-      const result=await boardRequest('boardSnapshot');const value=result[remote]===undefined?null:result[remote];
-      boardSync.base.set(remote,value);
-      if(value!==null){localStorage.setItem(boardLocalKey(key,shared),value);return {key,value};}
-      if(cached!==null){await this.set(key,cached,true);return {key,value:cached};}
-      return null;
-    }
-    return cached===null?null:{key,value:cached};
-  },
-  async set(key,value,shared){
-    const text=String(value),remote=shared&&boardRemoteKey(key);
-    localStorage.setItem(boardLocalKey(key,shared),text);
-    if(remote&&this.mode==='google'){
-      boardSync.pending++;
-      const previous=boardSync.queues.get(remote)||Promise.resolve();
-      const operation=previous.catch(()=>{}).then(async()=>{
-        const result=await boardRequest('boardSave',{key:remote,base:boardSync.base.has(remote)?boardSync.base.get(remote):null,value:text});
-        // The baseline is what THIS client last submitted, so unseen remote records are never treated as deletions.
-        boardSync.base.set(remote,text);return result;
-      });
-      boardSync.queues.set(remote,operation);
-      try{await operation;localStorage.removeItem('ppe_board_unsent:'+remote);}catch(e){localStorage.setItem('ppe_board_unsent:'+remote,text);boardSync.dirty=true;boardSync.error=e.message;throw e;}finally{boardSync.pending--;}
-    }
-    return {key,value:text};
-  },
-  async delete(key,shared){if(shared&&boardRemoteKey(key))throw Error('공유 저장소 전체 삭제는 지원하지 않습니다.');localStorage.removeItem(boardLocalKey(key,shared));}
+ async get(key,shared){const value=localStorage.getItem(boardLocalKey(key,shared));return value===null?null:{key,value};},
+ async set(key,value,shared){const text=String(value);localStorage.setItem(boardLocalKey(key,shared),text);const name=shared&&boardRemoteKey(key);if(name&&!boardSync.booting&&(this.mode==='google'||boardSync.loading))queueBoardSave(name,text);return {key,value:text};},
+ async delete(key,shared){if(shared&&boardRemoteKey(key))throw Error('공유 저장소 전체 삭제는 지원하지 않습니다.');localStorage.removeItem(boardLocalKey(key,shared));}
 };
-async function connectBoardStorage(){
-  try{const info=await boardRequest('boardPing');if(info.boardApi!==1)throw Error('Code.gs 새 버전 배포가 필요합니다.');window.storage.mode='google';boardSync.error='';}
-  catch(e){window.storage.mode='local';boardSync.error=e.message;}
+async function flushBoardSaves(){
+ if(boardSync.sending||boardSync.loading||window.storage.mode!=='google'||!boardSync.outbox.size)return;
+ boardSync.sending=true;const batch=[...boardSync.outbox];batch.forEach(([key])=>boardSync.outbox.delete(key));boardSync.pending=batch.length;boardSyncStatus();
+ await Promise.all(batch.map(async([key,text])=>{
+   const base=boardSync.base.has(key)?boardSync.base.get(key):null;if(base===text)return;
+   const compact=boardCompact(base,text);
+   try{await boardRequest('boardSave',{key,...compact,compact:true});boardSync.base.set(key,text);if(!boardSync.outbox.has(key))localStorage.removeItem('ppe_board_unsent:'+key);}
+   catch(e){localStorage.setItem('ppe_board_unsent:'+key,text);boardSync.error=e.message;boardSync.dirty=true;}
+ }));
+ boardSync.sending=false;boardSync.pending=boardSync.outbox.size;
+ if(!boardSync.pending&&!boardEntries().some(([key])=>localStorage.getItem('ppe_board_unsent:'+key))){boardSync.dirty=false;boardSync.error='';}
+ boardSyncStatus();if(boardSync.outbox.size)boardSync.timer=setTimeout(flushBoardSaves,300);
 }
-function boardSyncStatus(){
-  const el=document.getElementById('syncText');if(!el)return;
-  el.textContent=boardSync.dirty?'공유 저장 실패 — 기본 설정에서 확인':window.storage.mode==='google'?(boardSync.error?'공유 서버 연결 확인 필요':'Google Sheets 공유 연결됨'):'이 PC에 저장됨 · 공유 미연결';
-  el.title=boardSync.error||'';
+function boardSyncStatus(){const el=document.getElementById('syncText');if(!el)return;
+ el.textContent=boardSync.dirty?'공유 저장 실패 · PC 백업 보존':boardSync.loading?'PC 데이터 표시 중 · 공유 연결 확인 중':boardSync.pending?'이 PC에 저장됨 · 공유 저장 중':window.storage.mode==='google'?(boardSync.error?'공유 서버 연결 확인 필요':'Google Sheets 공유 연결됨'):'이 PC에 저장됨 · 공유 미연결';el.title=boardSync.error||'';
+}
+function applyBoardSnapshot(state){
+ let changed=false;
+ const editing=document.getElementById('overlay').classList.contains('open')||/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)||currentView==='settings';
+ const loaded=[];
+ boardEntries().forEach(([name,key])=>{
+   if(state[name]===undefined||state[name]===null||boardSync.outbox.has(name))return;
+   if(name!=='activity'&&editing)return;
+   const value=JSON.parse(state[name]);if(JSON.stringify(boardValue(name))===state[name]){loaded.push(name);return;}
+   if(name==='tasks')TASKS=value;if(name==='activity')ACTIVITY_LOG=value;if(name==='users')USERS=value;if(name==='models')MODELS=value;if(name==='checklists')CHECKLISTS=value;
+   boardSync.base.set(name,state[name]);localStorage.setItem(boardLocalKey(key,true),state[name]);loaded.push(name);changed=true;
+ });
+ // Do not acknowledge skipped data; a later poll must still fetch it.
+ if(!editing&&!boardSync.outbox.size)boardSync.revision=state.revision||null;
+ if(changed&&!editing){renderUserSwitcher();renderCurrent();}else if(currentView==='notif')renderNotifications();else renderNotifBadge();
+}
+async function startBoardShared(){
+ boardSync.booting=false;boardEntries().forEach(([name])=>boardSync.base.set(name,JSON.stringify(boardValue(name))));boardSyncStatus();
+ try{
+   const state=await boardRequest('boardSnapshot');
+   if(!Object.prototype.hasOwnProperty.call(state,'tasks'))throw Error('Code.gs 업무 공유 버전 배포가 필요합니다.');
+   window.storage.mode='google';boardSync.version=state.boardApi||1;
+   boardEntries().forEach(([name])=>{if(state[name]===null){boardSync.base.set(name,null);queueBoardSave(name,JSON.stringify(boardValue(name)));}});
+   applyBoardSnapshot(state);boardSync.error='';
+ }catch(e){window.storage.mode='local';boardSync.error=e.message;boardSync.outbox.clear();boardSync.pending=0;}
+ finally{boardSync.loading=false;boardSyncStatus();flushBoardSaves();}
 }
 async function refreshBoardShared(){
-  if(window.storage.mode!=='google'||boardSync.pending||boardSync.dirty||document.hidden)return;
-  try{
-    const state=await boardRequest('boardSnapshot');
-    if(boardSync.pending||boardSync.dirty)return;
-    if(state.activity!==null){ACTIVITY_LOG=JSON.parse(state.activity);boardSync.base.set('activity',state.activity);localStorage.setItem(boardLocalKey(ACTIVITY_KEY,true),state.activity);}
-    const editing=document.getElementById('overlay').classList.contains('open')||/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)||currentView==='settings';
-    let changed=false;
-    if(!editing){
-      const entries=[['tasks',STORAGE_KEY],['users',USERS_KEY],['models',MODELS_KEY],['checklists',CHECKLISTS_KEY]];
-      entries.forEach(([name,key])=>{if(state[name]===null)return;const value=JSON.parse(state[name]);
-        const prev={tasks:TASKS,users:USERS,models:MODELS,checklists:CHECKLISTS}[name];if(JSON.stringify(prev)!==state[name])changed=true;
-        if(name==='tasks')TASKS=value;if(name==='users')USERS=value;if(name==='models')MODELS=value;if(name==='checklists')CHECKLISTS=value;
-        boardSync.base.set(name,state[name]);localStorage.setItem(boardLocalKey(key,true),state[name]);
-      });
-      if(changed){renderUserSwitcher();renderCurrent();}
-    }
-    if(currentView==='notif')renderNotifications();else renderNotifBadge();boardSync.error='';boardSyncStatus();
-  }catch(e){boardSync.error=e.message;boardSyncStatus();}
+ if(window.storage.mode!=='google'||boardSync.loading||boardSync.fetching||boardSync.pending||boardSync.dirty||document.hidden)return;
+ boardSync.fetching=true;const requestedAtEditVersion=boardSync.editVersion;
+ try{
+  const state=await boardRequest('boardSnapshot',null,boardSync.revision?{revision:boardSync.revision}:{});
+  if(boardSync.pending||boardSync.dirty||requestedAtEditVersion!==boardSync.editVersion)return;
+  if(!state.unchanged)applyBoardSnapshot(state);boardSync.error='';
+ }catch(e){boardSync.error=e.message;}finally{boardSync.fetching=false;boardSyncStatus();}
 }
+window.addEventListener('beforeunload',e=>{if(window.storage.mode==='google'&&boardSync.pending){e.preventDefault();e.returnValue='';}});
+
 function renderSyncSettings(){
   const body=document.getElementById('settingsBody');
   body.innerHTML=`<div class="panel"><h3>Google Sheets 업무 공유</h3><p>두 PC에서 같은 Apps Script 배포 주소를 사용하세요. 작업자 선택과 알림 읽음 상태는 각 PC·브라우저에 따로 저장됩니다.</p><p><b>${window.storage.mode==='google'?'공유 서버 연결됨':'공유 미연결 — 현재 이 PC에만 저장 중'}</b></p><p style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</p><label for="boardApiUrl">Apps Script 웹 앱 URL (/exec)</label><input id="boardApiUrl" type="url" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.url)}"><button class="btn" id="boardConnect">주소 저장 및 연결 확인</button><button class="btn btn-ghost" id="boardExportLocal" style="margin-left:8px">현재 PC 업무 백업</button><p class="dash-note">Code.gs를 교체한 뒤 기존 웹 앱을 새 버전으로 배포하세요. 연결 성공 후 페이지를 다시 열면 공유 데이터를 불러옵니다. 공유 서버가 비어 있을 때 첫 PC의 데이터를 초기 등록합니다. 공유 저장 실패가 있었다면 백업 파일의 unsent 항목에 미전송 데이터가 보존됩니다.</p><div id="boardConnectResult" style="margin-top:10px"></div></div>`;
   document.getElementById('boardConnect').onclick=async()=>{
     const value=document.getElementById('boardApiUrl').value.trim(),old=boardSync.url;boardSync.url=value;
     const result=document.getElementById('boardConnectResult');result.textContent='연결 확인 중…';
-    try{const r=await boardRequest('boardPing');if(r.boardApi!==1)throw Error('업무 공유 API 버전이 다릅니다.');localStorage.setItem('ppe_board_api_url',value);result.textContent='연결 확인 완료. 현재 PC 업무를 백업한 뒤 페이지를 새로고침해 주세요.';}
+    try{const r=await boardRequest('boardPing');if(![1,2].includes(r.boardApi))throw Error('업무 공유 API 버전이 다릅니다.');localStorage.setItem('ppe_board_api_url',value);result.textContent='연결 확인 완료. 현재 PC 업무를 백업한 뒤 페이지를 새로고침해 주세요.';}
     catch(e){boardSync.url=old;result.textContent=e.message;}
   };
   document.getElementById('boardExportLocal').onclick=()=>{const blob=new Blob([JSON.stringify({tasks:TASKS,activity:ACTIVITY_LOG,users:USERS,models:MODELS,checklists:CHECKLISTS,unsent:Object.fromEntries(['tasks','activity','users','models','checklists'].map(k=>[k,JSON.parse(localStorage.getItem('ppe_board_unsent:'+k)||'null')]))},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='업무보드_PC백업.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),5000);};
@@ -911,7 +927,7 @@ function migrateActionItemsForType(t){
       changed = true;
     }
   });
-  if(t.actionItems && Object.keys(t.actionItems).length !== items.length) changed = true;
+  changed = JSON.stringify(t.actionItems||{}) !== JSON.stringify(newItems);
   if(changed) t.actionItems = newItems;
   return changed;
 }
@@ -1604,7 +1620,8 @@ function renderToolbar(container){
   }
   searchInput.addEventListener('compositionstart',()=>{composing=true;});
   searchInput.addEventListener('compositionend',()=>{composing=false;updateSearch();});
-  searchInput.addEventListener('input',e=>{if(!composing&&!e.isComposing)updateSearch();});
+  let searchTimer;
+  searchInput.addEventListener('input',e=>{clearTimeout(searchTimer);if(!composing&&!e.isComposing)searchTimer=setTimeout(()=>{if(searchInput.isConnected)updateSearch();},100);});
   container.querySelector('#filtModel').addEventListener('change', e=>{ filter.model = e.target.value; renderCurrent(); });
   container.querySelector('#filtType').addEventListener('change', e=>{ filter.type = e.target.value; renderCurrent(); });
   container.querySelector('#filtAssignee').addEventListener('change', e=>{ filter.assignee = e.target.value; renderCurrent(); });
@@ -2243,7 +2260,7 @@ function openDetail(id){
     const labels={type:'유형',model:'MODEL',assignee:'담당자',dueRequest:'완료요청일',receivedDate:'수신일',note:'비고',ecnStep:'ECN STEP 1',actionItems:'체크 항목',materialLists:'신규자재 목록',partNumber:'품번',link:'업무 링크'};
     const changes=Object.keys(labels).filter(key=>JSON.stringify(before[key])!==JSON.stringify(t[key])).map(key=>labels[key]);
     if(changes.length)await logActivity('update', '<b>'+escapeHtml(currentUserLabel())+'</b>님이 "<b>'+escapeHtml(t.title)+'</b>"의 '+changes.map(escapeHtml).join(', ')+'을(를) 변경했습니다.',t.id);
-    renderCurrent();
+    if(document.getElementById('overlay').classList.contains('open'))boardViewDirty=true;else renderCurrent();
   };
 
   setupModelCombobox(modal.querySelector('#fModel'));
@@ -2363,8 +2380,10 @@ function openDetail(id){
     if(e.key==='Enter'){ e.preventDefault(); submitComment(); }
   });
 }
+let boardViewDirty=false;
 function closeModal(){
   document.getElementById('overlay').classList.remove('open');
+  if(boardViewDirty){boardViewDirty=false;renderCurrent();}
   if(pasteListenerRef){ document.removeEventListener('paste', pasteListenerRef); pasteListenerRef = null; }
 }
 
@@ -2854,7 +2873,6 @@ async function createTaskFromForm(){
 
 /* ================= INIT ================= */
 (async function init(){
-  await connectBoardStorage();
   await loadUsers();
   renderUserSwitcher();
   await loadMyOnlyPref();
@@ -2866,7 +2884,7 @@ async function createTaskFromForm(){
   await loadLabelLink();
   if(LABEL_LINK && !linkedTask()) await setLabelLink(null); // 연결된 업무가 사라졌으면 정리
   renderCurrent();
-  boardSyncStatus();
+  startBoardShared();
   setInterval(refreshBoardShared,15000);
   window.addEventListener('focus',refreshBoardShared);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshBoardShared();});
