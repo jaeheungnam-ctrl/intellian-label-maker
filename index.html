@@ -500,6 +500,9 @@
 <div class="overlay" id="overlay">
   <div class="modal" id="modal"></div>
 </div>
+<div class="overlay" id="mailOverlay" style="z-index:60;">
+  <div class="modal" id="mailModal" style="max-width:560px;"></div>
+</div>
 <div class="undo-toast" id="undoToast"></div>
 
 <script>
@@ -1088,6 +1091,67 @@ function allMaterialsForTask(t){
   const merged = [];
   keys.forEach(k=>{ ((t.materialLists && t.materialLists[k]) || []).forEach(x=>merged.push(x)); });
   return merged;
+}
+// 업무 카드(작업 상세 모달) 위에 별도 팝업으로 메일 내용을 편집한다.
+// 상세 모달에서 다른 필드를 작성 중이던 내용을 건드리지 않기 위해 독립된 오버레이를 쓴다.
+function openMailPopup(task, item){
+  const overlay = document.getElementById('mailOverlay');
+  const modal = document.getElementById('mailModal');
+  const hasOverride = !!(task.mailOverrides && task.mailOverrides[item.key]);
+  const content = hasOverride ? task.mailOverrides[item.key] : fillTemplate(item.emailTemplate, task);
+  modal.innerHTML = `
+    <div class="modal-head">
+      <div class="modal-x"><button class="closebtn" id="mailPopupClose">✕</button></div>
+      <h2>${escapeHtml(item.label)}</h2>
+      <div style="font-size:12px; color:var(--muted); margin-top:4px;">${escapeHtml(task.title)}</div>
+    </div>
+    <div class="modal-body">
+      <textarea id="mailPopupText" class="mail-preview-text" style="min-height:280px; border:1px solid var(--border-soft); border-radius:8px;">${escapeHtml(content)}</textarea>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px;">
+        <button class="btn btn-ghost" id="mailPopupRegen" type="button">↻ 템플릿으로 재생성</button>
+        <button class="btn btn-ghost" id="mailPopupCopy" type="button">📋 복사</button>
+        <button class="btn" id="mailPopupSave" type="button">저장</button>
+      </div>
+    </div>
+  `;
+  overlay.classList.add('open');
+
+  const textarea = document.getElementById('mailPopupText');
+  async function persistCurrent(){
+    task.mailOverrides = task.mailOverrides || {};
+    task.mailOverrides[item.key] = textarea.value;
+    await persist();
+  }
+  textarea.addEventListener('change', persistCurrent);
+  document.getElementById('mailPopupSave').addEventListener('click', async ()=>{
+    const btn = document.getElementById('mailPopupSave');
+    await persistCurrent();
+    btn.textContent = '✅ 저장됨';
+    setTimeout(()=>{ if(document.getElementById('mailPopupSave')) btn.textContent = '저장'; }, 1500);
+  });
+  document.getElementById('mailPopupRegen').addEventListener('click', async ()=>{
+    const btn = document.getElementById('mailPopupRegen');
+    textarea.value = fillTemplate(item.emailTemplate, task);
+    if(task.mailOverrides) delete task.mailOverrides[item.key];
+    await persist();
+    btn.textContent = '✅ 재생성됨';
+    setTimeout(()=>{ if(document.getElementById('mailPopupRegen')) btn.textContent = '↻ 템플릿으로 재생성'; }, 1500);
+  });
+  document.getElementById('mailPopupCopy').addEventListener('click', async ()=>{
+    const btn = document.getElementById('mailPopupCopy');
+    try{ await navigator.clipboard.writeText(textarea.value); }
+    catch(e){
+      textarea.focus(); textarea.select();
+      try{ document.execCommand('copy'); }catch(e2){}
+    }
+    btn.textContent = '✅ 복사됨';
+    setTimeout(()=>{ if(document.getElementById('mailPopupCopy')) btn.textContent = '📋 복사'; }, 1500);
+  });
+  function closeMailPopup(){ overlay.classList.remove('open'); }
+  document.getElementById('mailPopupClose').addEventListener('click', closeMailPopup);
+  overlay.addEventListener('click', function bgClick(e){
+    if(e.target===overlay){ closeMailPopup(); overlay.removeEventListener('click', bgClick); }
+  });
 }
 function fillTemplate(tpl, t){
   tpl=(tpl||'').replace(/{{(mdmNumber|mdmTitle|partNumber|link)}}/g,(_,key)=>({mdmNumber:t.docNumber||'(미입력)',mdmTitle:t.title||'(미입력)',partNumber:t.partNumber||'(품번을 입력해 주세요)',link:t.link||''})[key]);
@@ -2289,23 +2353,13 @@ function openDetail(id){
   const actionItemsHtml = checklistItems.map(a=>{
     const checked = !!t.actionItems[a.key];
     if(a.type === 'email'){
-      const hasOverride = !!(t.mailOverrides && t.mailOverrides[a.key]);
-      const content = hasOverride ? t.mailOverrides[a.key] : fillTemplate(a.emailTemplate, t);
       return `
         <div class="check-opt-row">
           <label class="check-opt ${checked?'done':''}" data-key="${a.key}">
             <input type="checkbox" data-key="${a.key}" ${checked?'checked':''}>
             <span>${escapeHtml(a.label)}</span>
           </label>
-          <button class="mini-action-btn" data-mail-toggle="${a.key}" type="button">✉ 메일내용 생성</button>
-        </div>
-        <div class="mail-preview" id="mailPreview_${a.key}" style="display:none;">
-          <div class="mail-preview-head">
-            <span>이메일 내용 (직접 수정 가능 · 복사해서 메일 앱에 붙여넣으세요)</span>
-            <button class="mini-action-btn" data-copy-key="${a.key}" type="button">📋 복사</button>
-            <button class="mini-action-btn" data-regen-key="${a.key}" type="button">↻ 템플릿으로 재생성</button>
-          </div>
-          <textarea class="mail-preview-text" id="mailText_${a.key}">${escapeHtml(content)}</textarea>
+          <button class="mini-action-btn" data-mail-popup="${a.key}" type="button">✉ 메일내용 생성</button>
         </div>`;
     }
     if(a.type === 'link'){
@@ -2478,74 +2532,16 @@ function openDetail(id){
       e.target.closest('.check-opt').classList.toggle('done', e.target.checked);
     });
   });
-  // 직접 수정한 내용(override)이 있으면 그대로 두고, 없는 항목만 템플릿+업무 데이터로 채운다.
-  // (품번/링크 등을 바꿔도 이미 손으로 고친 메일 내용은 덮어쓰지 않기 위함)
-  function refreshMailPreviews(){
-    checklistFor(t.type,t).filter(a=>a.type==='email').forEach(a=>{
-      const el=modal.querySelector('#mailText_'+a.key);
-      if(!el) return;
-      if(t.mailOverrides && t.mailOverrides[a.key]) return;
-      el.value=fillTemplate(a.emailTemplate,t);
-    });
-  }
-  modal.querySelector('#fPartNumber').addEventListener('change',e=>{commit(task=>{task.partNumber=e.target.value.trim();});refreshMailPreviews();});
+  modal.querySelector('#fPartNumber').addEventListener('change',e=>{commit(task=>{task.partNumber=e.target.value.trim();});});
   modal.querySelector('#fLink').addEventListener('change',e=>{
     const value=e.target.value.trim();if(value&&!safeTaskUrl(value)){alert('http:// 또는 https://로 시작하는 링크를 입력해 주세요.');e.target.value=t.link||'';return;}
-    commit(task=>{task.link=value;});modal.querySelector('#taskLinkPreview').innerHTML=taskLinkHtml(t);refreshMailPreviews();
+    commit(task=>{task.link=value;});modal.querySelector('#taskLinkPreview').innerHTML=taskLinkHtml(t);
   });
-  modal.querySelectorAll('[data-mail-toggle]').forEach(btn=>{
+  modal.querySelectorAll('[data-mail-popup]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      refreshMailPreviews();
-      const key = btn.dataset.mailToggle;
-      const preview = modal.querySelector('#mailPreview_'+key);
-      if(!preview) return;
-      const nowOpen = preview.style.display === 'none';
-      preview.style.display = nowOpen ? 'block' : 'none';
-      btn.textContent = nowOpen ? '✉ 메일내용 접기' : '✉ 메일내용 생성';
-    });
-  });
-  modal.querySelectorAll('.mail-preview-text').forEach(ta=>{
-    ta.addEventListener('change', ()=>{
-      const key = ta.id.replace('mailText_','');
-      commit(task=>{
-        task.mailOverrides = task.mailOverrides || {};
-        task.mailOverrides[key] = ta.value;
-      });
-    });
-  });
-  modal.querySelectorAll('[data-regen-key]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const key = btn.dataset.regenKey;
+      const key = btn.dataset.mailPopup;
       const item = checklistFor(t.type,t).find(a=>a.key===key);
-      const textarea = modal.querySelector('#mailText_'+key);
-      if(!item || !textarea) return;
-      const filled = fillTemplate(item.emailTemplate, t);
-      textarea.value = filled;
-      commit(task=>{
-        if(task.mailOverrides) delete task.mailOverrides[key];
-      });
-      const original = btn.textContent;
-      btn.textContent = '✅ 재생성됨';
-      setTimeout(()=>{ btn.textContent = original; }, 1500);
-    });
-  });
-  modal.querySelectorAll('[data-copy-key]').forEach(btn=>{
-    btn.addEventListener('click', async ()=>{
-      const key = btn.dataset.copyKey;
-      const textarea = modal.querySelector('#mailText_'+key);
-      if(!textarea) return;
-      const text = textarea.value;
-      try{
-        await navigator.clipboard.writeText(text);
-      }catch(e){
-        textarea.focus();
-        textarea.select();
-        let copied=false;try{copied=document.execCommand('copy');}catch(e2){}
-        if(!copied){btn.textContent='내용을 선택했습니다. Ctrl+C로 복사';return;}
-      }
-      const original = btn.textContent;
-      btn.textContent = '✅ 복사됨';
-      setTimeout(()=>{ btn.textContent = original; }, 1500);
+      if(item) openMailPopup(t, item);
     });
   });
   modal.querySelectorAll('[data-link-key]').forEach(btn=>{
