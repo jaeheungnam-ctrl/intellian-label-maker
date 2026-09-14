@@ -1904,7 +1904,10 @@ async function persist(silent){
 }
 
 function escapeHtml(s){
-  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  // s가 문자열이 아니면(숫자 등) String으로 감싸지 않은 채 .replace를 호출해서 "(s || "").replace is not
+  // a function" 오류가 났다 — 구글시트가 숫자처럼 보이는 문자열(작지번호 등)을 자동으로 숫자형으로
+  // 바꿔버리는 경우가 있어서, 공유 저장소에서 내려온 값은 숫자로 올 수 있다. 항상 String으로 감싼다.
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 // ---------- 업무 비고칸(rich note): 링크/이미지 붙여넣기 ----------
 // t.note는 예전엔 순수 텍스트였는데, 이제부터는 우리가 직접 만든 안전한 HTML 조각(escape된 텍스트 +
