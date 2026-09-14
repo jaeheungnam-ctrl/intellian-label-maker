@@ -2129,15 +2129,25 @@ async function fetchMesApiKey(){
   return mesApiKeyCache;
 }
 function mesDateStr(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
-
-const MES_HISTORY_KEY = 'ppe_mes_lookup_history_v1';
-function loadMesHistory(){
-  try{ return JSON.parse(localStorage.getItem(MES_HISTORY_KEY) || '[]'); }catch(e){ return []; }
+// SAP 작지번호는 순수 숫자에 앞자리 0이 채워진 형태(예: 0001986827)라, 사용자가 앞자리 0을 빼고 입력해도
+// (1986827) 매칭되도록 순수 숫자 문자열일 때만 앞자리 0을 제거해 비교한다. MES 작지번호(PP101620906)처럼
+// 문자가 섞인 값은 그대로 둔다.
+function normMesOrderNo(s){
+  s = String(s||'').trim();
+  return /^\d+$/.test(s) ? s.replace(/^0+(?=\d)/, '') : s;
 }
-function saveMesHistoryEntry(entry){
-  const list = loadMesHistory();
-  list.unshift(entry);
-  try{ localStorage.setItem(MES_HISTORY_KEY, JSON.stringify(list.slice(0, 30))); }catch(e){}
+
+// 조회 이력은 이 사람만 보는 게 아니라 팀 전체가 공유해야 해서(누가 어떤 작지번호를 찾아봤는지 같이 보기),
+// 브라우저 localStorage가 아니라 공유 구글시트(Apps Script)에 저장한다 — 라벨데이터 변환기의 saveRulesets와 같은 방식.
+async function fetchMesHistory(){
+  try{
+    const res = await boardRequest('mesHistoryList');
+    return Array.isArray(res.list) ? res.list : [];
+  }catch(e){ console.error('mesHistoryList failed', e); return []; }
+}
+async function addMesHistoryEntry(entry){
+  try{ await boardRequest('mesHistoryAdd', { entry: Object.assign({ userName: currentUserLabel() }, entry) }); }
+  catch(e){ console.error('mesHistoryAdd failed', e); /* 이력 공유 저장 실패는 조용히 무시 — 조회 자체는 계속 동작해야 함 */ }
 }
 function mesRelativeTime(ts){
   const mins = Math.round((Date.now() - ts) / 60000);
@@ -2201,18 +2211,20 @@ async function renderMesLookup(){
     return;
   }
 
-  function renderHistoryList(){
-    const list = loadMesHistory();
+  let mesHistoryCache = [];
+  async function renderHistoryList(){
+    mesHistoryCache = await fetchMesHistory();
+    const list = mesHistoryCache;
     if(!list.length){ historyEl.innerHTML = `<div class="comment-empty">아직 조회 이력이 없습니다.</div>`; return; }
     historyEl.innerHTML = list.map((h,i)=> `
       <div class="mesHistoryItem" data-idx="${i}" style="display:flex; justify-content:space-between; gap:10px; padding:6px 4px; font-size:12.5px; cursor:pointer; border-bottom:1px solid var(--border);">
-        <span>${escapeHtml(h.query)} — ${h.found ? escapeHtml((h.mNumber||'')+' '+(h.mName||'')) : '찾지 못함'}</span>
+        <span>${escapeHtml(h.query)} — ${h.found ? escapeHtml((h.mNumber||'')+' '+(h.mName||'')) : '찾지 못함'}${h.userName ? ' <span class="muted-cell">('+escapeHtml(h.userName)+')</span>' : ''}</span>
         <span class="muted-cell" style="white-space:nowrap;">${mesRelativeTime(h.ts)}</span>
       </div>
     `).join('');
     historyEl.querySelectorAll('.mesHistoryItem').forEach(row=>{
       row.addEventListener('click', ()=>{
-        const h = loadMesHistory()[Number(row.dataset.idx)];
+        const h = mesHistoryCache[Number(row.dataset.idx)];
         if(!h) return;
         document.getElementById('mesOrderInput').value = h.query;
         document.getElementById('mesSearchBtn').click();
@@ -2300,16 +2312,17 @@ async function renderMesLookup(){
       if(data.result !== true){
         statusEl.style.color = 'var(--danger, #b3423a)';
         statusEl.textContent = data.message || 'MES 조회에 실패했습니다.';
-        saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
-        renderHistoryList();
+        await addMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
+        await renderHistoryList();
         return;
       }
       const list = Array.isArray(data.list) ? data.list : [];
       const elapsedSec = ((performance.now() - startedAt) / 1000).toFixed(1);
       // SAP 작지번호(PPOrderAX)로 먼저 찾아보고, 없으면 MES 작지번호(PPOrder)로 찾는다 — 어느 쪽으로
       // 찾았는지에 따라 결과에 MES 작지번호를 예외적으로 같이 보여줄지가 달라진다(위 renderResult 참고).
-      const bySap = list.find(r => String(r.PPOrderAX||'').trim() === searchedAs);
-      const byMes = !bySap ? list.find(r => String(r.PPOrder||'').trim() === searchedAs) : null;
+      const searchedAsNorm = normMesOrderNo(searchedAs);
+      const bySap = list.find(r => normMesOrderNo(r.PPOrderAX) === searchedAsNorm);
+      const byMes = !bySap ? list.find(r => normMesOrderNo(r.PPOrder) === searchedAsNorm) : null;
       const anyMatch = bySap || byMes;
       let group = [];
       if(anyMatch){
@@ -2321,13 +2334,13 @@ async function renderMesLookup(){
       if(!group.length){
         resultEl.innerHTML = `<div class="comment-empty">"${escapeHtml(searchedAs)}"에 해당하는 작지를 이 기간 안에서 찾지 못했습니다. 기간을 넓혀서 다시 시도해 보세요.</div>`;
       }
-      saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: !!resultSummary, mNumber: resultSummary && resultSummary.MNumber, mName: resultSummary && resultSummary.MName });
-      renderHistoryList();
+      await addMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: !!resultSummary, mNumber: resultSummary && resultSummary.MNumber, mName: resultSummary && resultSummary.MName });
+      await renderHistoryList();
     }catch(err){
       statusEl.style.color = 'var(--danger, #b3423a)';
       statusEl.textContent = 'MES 호출에 실패했습니다 — 사내망(VPN) 연결 상태를 확인해 주세요. (' + (err.message||err) + ')';
-      saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
-      renderHistoryList();
+      await addMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
+      await renderHistoryList();
     }finally{
       btn.disabled = false;
     }
@@ -2463,8 +2476,16 @@ function renderDashboard(){
 
   // ---- 최근 등록된 업무 하이라이트 (업무 id에 박힌 생성 시각 기준) ----
   function createdAtOf(t){ const m=/^t(\d+)/.exec(t.id||''); return m? Number(m[1]) : 0; }
+  // 등록 시각과 "지금" 사이 흐른 시간(ms)을 24시간으로 그냥 나누면, 어제 23시 59분에 등록된 업무가
+  // 오늘 0시 5분에 봤을 때 5분밖에 안 지났다는 이유로 "오늘 등록"으로 잘못 표시된다(달력 날짜가 이미 바뀌었는데도).
+  // 그래서 시각은 무시하고 "등록된 날짜"와 "오늘 날짜"의 자정 기준 날짜 차이로 계산한다.
+  function startOfDay(ms){ const d = new Date(ms); d.setHours(0,0,0,0); return d.getTime(); }
   const recent = tasks.slice().sort((a,b)=> createdAtOf(b)-createdAtOf(a)).slice(0,8)
-    .map(t=>({t, daysAgo: Math.max(0, Math.floor((now - createdAtOf(t)) / 86400000))}));
+    .map(t=>{
+      const createdAt = createdAtOf(t);
+      const daysAgo = createdAt ? Math.max(0, Math.round((startOfDay(now) - startOfDay(createdAt)) / 86400000)) : 0;
+      return {t, daysAgo};
+    });
 
   el.innerHTML=`
     <div class="dq-hero">
