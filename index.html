@@ -751,6 +751,7 @@
     <button class="navbtn" data-view="labeldata"><span class="dot"></span>라벨데이터 변환기</button>
     <button class="navbtn" data-view="labeldata_ai"><span class="dot"></span>라벨데이터변환기 (AI)</button>
     <button class="navbtn" data-view="sapbomcompare"><span class="dot"></span>EBOM ↔ SAP BOM 비교</button>
+    <button class="navbtn" data-view="mesorder"><span class="dot"></span>SAP 작지번호 조회</button>
     <button class="navbtn" data-view="settings"><span class="dot"></span>기본 설정</button>
     <div class="sidebar-foot">
       <div class="user-box">
@@ -784,6 +785,7 @@
     <section id="view-notif" style="display:none"></section>
     <section id="view-labeldata" style="display:none"></section>
     <section id="view-sapbomcompare" style="display:none"></section>
+    <section id="view-mesorder" style="display:none"></section>
     <section id="view-settings" style="display:none"></section>
   </main>
 </div>
@@ -2107,6 +2109,139 @@ function renderSapBomCompare(){
   frame.srcdoc = b64ToUtf8(SAPBOM_COMPARE_TOOL_B64);
   document.getElementById('view-sapbomcompare').appendChild(frame);
 }
+
+/* ================= SAP 작지번호 조회 (MES productiontechApi) =================
+   MES(mes.intelliantech.com)는 사내망(VPN) 전용이라 이 페이지(브라우저)가 VPN 안에 있을 때만 호출된다.
+   구글 서버(Apps Script)는 그 망 밖에 있어서 대신 호출해 줄 수 없다 — 그래서 브라우저가 직접 MES를 호출한다.
+   API 키는 index.html에 평문으로 넣지 않고, Apps Script의 Script Properties에서 그때그때 받아온다
+   (doGet action=mesApiKey — Code_merged.gs의 setMesApiKey()로 미리 저장해 둬야 함).
+   PPOrderAX(SAP 작지번호)는 조회 파라미터로 직접 검색할 수 없어서, 기간으로 목록을 받아와 그 안에서
+   찾는 방식이다 — 그래서 기간을 넓게 잡으면 응답이 커지고 느려질 수 있다(최대 180일로 제한). */
+const MES_API_BASE = { prod: 'https://mes.intelliantech.com/productiontechApi/productionOrderList.do',
+                        dev: 'https://mesdev.intelliantech.com/productiontechApi/productionOrderList.do' };
+let mesApiKeyCache = null; // null=아직 안 받아옴, ''=서버에 키 미설정, 그 외=실제 키
+async function fetchMesApiKey(){
+  if(mesApiKeyCache !== null) return mesApiKeyCache;
+  try{
+    const res = await boardRequest('mesApiKey');
+    mesApiKeyCache = res.key || '';
+  }catch(e){ mesApiKeyCache = ''; }
+  return mesApiKeyCache;
+}
+function mesDateStr(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+
+async function renderMesLookup(){
+  const el = document.getElementById('view-mesorder');
+  const today = new Date();
+  // API가 SAP 작지번호로 직접 검색을 지원하지 않아 기간 내 전체를 받아서 걸러내는 구조라(구조 자체는 못 바꿈),
+  // 기본 기간을 짧게(14일) 잡아 보통 경우엔 빠르게 끝나도록 하고, 필요할 때만 "더 넓게" 눌러서 늘리게 한다.
+  const DEFAULT_SPAN_DAYS = 14;
+  const MAX_SPAN_DAYS = 60;
+  const from14 = new Date(today); from14.setDate(from14.getDate()-DEFAULT_SPAN_DAYS);
+  el.innerHTML = `
+    <div class="panel" style="max-width:640px;">
+      <h3>SAP 작지번호로 생산 품목 조회</h3>
+      <p class="settings-desc">SAP 작지번호를 넣으면 그 기간 안에서 찾아 <b>어떤 품목(품번)을 생산하는 건인지</b>만 보여줍니다. <b>사내망(VPN) 접속 상태에서만 조회됩니다.</b> API가 SAP 작지번호로 바로 검색을 지원하지 않아 기간 내 목록을 받아 그 안에서 찾는 방식이라, 기간이 넓을수록 느려집니다 — 되는 대로 짧게 잡아주세요.</p>
+      <div class="form-grid">
+        <div class="field"><label>SAP 작지번호 *</label><input type="text" id="mesOrderInput" placeholder="예: 4100012345"></div>
+        <div class="field"><label>환경</label>
+          <select id="mesEnvSelect"><option value="prod">운영 (mes.intelliantech.com)</option><option value="dev">개발 (mesdev.intelliantech.com)</option></select>
+        </div>
+        <div class="field"><label>조회 시작일</label><input type="date" id="mesFromDate" value="${mesDateStr(from14)}"></div>
+        <div class="field"><label>조회 종료일</label><input type="date" id="mesToDate" value="${mesDateStr(today)}"></div>
+      </div>
+      <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+        <span class="muted-cell">기간:</span>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="7" style="padding:4px 10px; font-size:12px;">최근 7일</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="14" style="padding:4px 10px; font-size:12px;">최근 14일</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="30" style="padding:4px 10px; font-size:12px;">최근 30일</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="60" style="padding:4px 10px; font-size:12px;">최근 60일(최대)</button>
+      </div>
+      <div style="margin-top:12px; display:flex; align-items:center; gap:10px;">
+        <button class="btn" id="mesSearchBtn">조회</button>
+        <span id="mesStatusLine" class="muted-cell"></span>
+      </div>
+      <div id="mesResultArea" style="margin-top:16px;"></div>
+    </div>
+  `;
+  const statusEl = document.getElementById('mesStatusLine');
+  const resultEl = document.getElementById('mesResultArea');
+  const key = await fetchMesApiKey();
+  if(!key){
+    statusEl.textContent = 'MES API 키가 서버에 설정되어 있지 않습니다.';
+    statusEl.style.color = 'var(--danger, #b3423a)';
+    resultEl.innerHTML = `<div class="comment-empty">Apps Script 편집기에서 <code>setMesApiKey("발급받은키")</code>를 한 번 실행해 주세요 (Code_merged.gs).</div>`;
+    document.getElementById('mesSearchBtn').disabled = true;
+    return;
+  }
+
+  el.querySelectorAll('.mesRangeBtn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const days = Number(btn.dataset.days);
+      const from = new Date(today); from.setDate(from.getDate()-days);
+      document.getElementById('mesFromDate').value = mesDateStr(from);
+      document.getElementById('mesToDate').value = mesDateStr(today);
+    });
+  });
+
+  // 필요한 건 "SAP 작지번호 → 품번/품명"뿐이므로 그 둘을 큰 글씨로 먼저 보여주고, 나머지(상태·수량·일자 등)는
+  // 한 줄로 작게 덧붙이는 정도로만 — 표를 쭉 훑을 필요 없이 한눈에 끝나게 한다.
+  function renderResult(rows, targetOrder){
+    if(!rows.length){
+      resultEl.innerHTML = `<div class="comment-empty">"${escapeHtml(targetOrder)}" 작지번호를 이 기간 안에서 찾지 못했습니다. 기간을 넓혀서 다시 시도해 보세요.</div>`;
+      return;
+    }
+    resultEl.innerHTML = rows.map(r => `
+      <div class="panel" style="margin-bottom:10px;">
+        <div style="font-size:16.5px; font-weight:700;">${escapeHtml(String(r.MNumber ?? ''))} <span class="muted-cell" style="font-weight:400; font-size:13px;">— ${escapeHtml(String(r.MName ?? ''))}</span></div>
+        <div class="muted-cell" style="margin-top:4px; font-size:12px;">
+          SAP 작지번호 ${escapeHtml(String(r.PPOrderAX ?? ''))} · 상태 ${escapeHtml(String(r.PPProgressName ?? '-'))} · 수량 ${escapeHtml(String(r.Quantity ?? '-'))} · 작업지시일 ${escapeHtml(String(r.RQDate ?? '-'))}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('mesSearchBtn').addEventListener('click', async ()=>{
+    const targetOrder = document.getElementById('mesOrderInput').value.trim();
+    if(!targetOrder){ alert('SAP 작지번호를 입력해 주세요.'); return; }
+    const fromDate = document.getElementById('mesFromDate').value;
+    const toDate = document.getElementById('mesToDate').value;
+    if(!fromDate || !toDate){ alert('조회 시작일/종료일을 입력해 주세요.'); return; }
+    const spanDays = (new Date(toDate) - new Date(fromDate)) / 86400000;
+    if(spanDays < 0){ alert('종료일이 시작일보다 앞설 수 없습니다.'); return; }
+    if(spanDays > MAX_SPAN_DAYS){ alert(`한 번에 조회할 수 있는 기간은 최대 ${MAX_SPAN_DAYS}일입니다 — 기간이 넓으면 그만큼 느려집니다. 기간을 줄여주세요.`); return; }
+    const env = document.getElementById('mesEnvSelect').value;
+    const base = MES_API_BASE[env];
+
+    const btn = document.getElementById('mesSearchBtn');
+    btn.disabled = true;
+    statusEl.style.color = '';
+    statusEl.textContent = '조회 중…';
+    resultEl.innerHTML = '';
+    const startedAt = performance.now();
+    try{
+      const qs = new URLSearchParams({ apiKey:key, FRomRQDate:fromDate, ToRQDate:toDate });
+      const res = await fetch(base + '?' + qs.toString(), { signal: AbortSignal.timeout(20000) });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      if(data.result !== true){
+        statusEl.style.color = 'var(--danger, #b3423a)';
+        statusEl.textContent = data.message || 'MES 조회에 실패했습니다.';
+        return;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      const matched = list.filter(r => String(r.PPOrderAX||'').trim() === targetOrder);
+      const elapsedSec = ((performance.now() - startedAt) / 1000).toFixed(1);
+      statusEl.textContent = `${elapsedSec}초 · 기간 내 전체 ${list.length}건 중 일치 ${matched.length}건`;
+      renderResult(matched, targetOrder);
+    }catch(err){
+      statusEl.style.color = 'var(--danger, #b3423a)';
+      statusEl.textContent = 'MES 호출에 실패했습니다 — 사내망(VPN) 연결 상태를 확인해 주세요. (' + (err.message||err) + ')';
+    }finally{
+      btn.disabled = false;
+    }
+  });
+}
 /* ================= NAV ================= */
 // "라벨데이터변환기 (AI)"는 화면 전환이 아니라 별도 Claude Artifact를 새 탭으로 여는 버튼이다 —
 // 클로드 계정이 있는 사람만 보이는 메뉴(RESTRICTED_MENUS)이며, 탭 이름을 지정해 이미 열려 있으면 재사용한다.
@@ -2139,6 +2274,7 @@ const TITLES = {
   notif:   ['시스템 로그', '이 페이지에서 최근 있었던 변경 사항입니다. 필터로 좁혀보고, 클릭하면 해당 업무로 바로 이동합니다.'],
   labeldata:['라벨데이터 변환기', '패킹리스트(.xlsx)를 업로드해 LABEL DATA 파일로 변환합니다. 별도로 관리되는 도구이며, 이 화면 안에서 그대로 동작합니다.'],
   sapbomcompare:['EBOM ↔ SAP BOM 비교', 'EBOM과 SAP BOM 파일을 업로드하여 구성품과 수량 차이를 비교합니다.'],
+  mesorder:['SAP 작지번호 조회', 'MES에 SAP 작지번호로 어떤 품목을 생산하는 건인지 조회합니다. 사내망(VPN) 안에서만 동작합니다.'],
   settings:['기본 설정', 'MODEL 목록, 팀원, 업무유형별 체크리스트를 관리합니다.'],
 };
 
@@ -2152,10 +2288,11 @@ function renderCurrent(){
   document.getElementById('view-settings').style.display = currentView==='settings' ? '' : 'none';
   document.getElementById('view-labeldata').style.display = currentView==='labeldata' ? '' : 'none';
   document.getElementById('view-sapbomcompare').style.display = currentView==='sapbomcompare' ? '' : 'none';
+  document.getElementById('view-mesorder').style.display = currentView==='mesorder' ? '' : 'none';
   document.getElementById('pageTitle').textContent = TITLES[currentView][0];
   document.getElementById('pageSub').textContent = TITLES[currentView][1];
   // 비활성 화면의 이전 내용은 비워서, id가 겹치는 요소(검색창/필터/버튼 등)가 문서에 동시에 존재하지 않게 함
-  const sections = ['view-dashboard','view-process','view-board','view-list','view-announce','view-notif','view-settings'];
+  const sections = ['view-dashboard','view-process','view-board','view-list','view-announce','view-notif','view-settings','view-mesorder'];
   // view-labeldata는 iframe으로 별도 앱을 담고 있어 비울 때마다 초기화되면 안 되므로 sections 목록에 포함하지 않음
   const activeSection = 'view-' + currentView;
   sections.forEach(s=>{ if(s !== activeSection) document.getElementById(s).innerHTML = ''; });
@@ -2168,6 +2305,7 @@ function renderCurrent(){
   if(currentView==='settings') renderSettings();
   if(currentView==='labeldata') renderLabelData();
   if(currentView==='sapbomcompare') renderSapBomCompare();
+  if(currentView==='mesorder') renderMesLookup();
   renderNotifBadge();
   renderAnnounceBadge();
 }
