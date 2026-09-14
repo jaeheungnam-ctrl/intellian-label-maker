@@ -2130,42 +2130,68 @@ async function fetchMesApiKey(){
 }
 function mesDateStr(d){ const p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
 
+const MES_HISTORY_KEY = 'ppe_mes_lookup_history_v1';
+function loadMesHistory(){
+  try{ return JSON.parse(localStorage.getItem(MES_HISTORY_KEY) || '[]'); }catch(e){ return []; }
+}
+function saveMesHistoryEntry(entry){
+  const list = loadMesHistory();
+  list.unshift(entry);
+  try{ localStorage.setItem(MES_HISTORY_KEY, JSON.stringify(list.slice(0, 30))); }catch(e){}
+}
+function mesRelativeTime(ts){
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if(mins < 1) return '방금 전';
+  if(mins < 60) return mins + '분 전';
+  const hours = Math.round(mins / 60);
+  if(hours < 24) return hours + '시간 전';
+  return Math.round(hours / 24) + '일 전';
+}
+
 async function renderMesLookup(){
   const el = document.getElementById('view-mesorder');
+  // 보드가 15초마다 서버 데이터를 새로 받아오면서(다른 화면과 무관하게) renderCurrent()가 다시 호출되는데,
+  // 그때마다 이 화면을 처음부터 다시 그리면 입력값·조회 결과가 시간이 지나면 사라지는 것처럼 보인다 —
+  // 이미 그려져 있으면 다시 그리지 않고 그대로 둔다(라벨데이터 변환기 iframe과 같은 방어 패턴).
+  if(document.getElementById('mesSearchBtn')) return;
   const today = new Date();
-  // API가 SAP 작지번호로 직접 검색을 지원하지 않아 기간 내 전체를 받아서 걸러내는 구조라(구조 자체는 못 바꿈),
-  // 기본 기간을 짧게(14일) 잡아 보통 경우엔 빠르게 끝나도록 하고, 필요할 때만 "더 넓게" 눌러서 늘리게 한다.
-  const DEFAULT_SPAN_DAYS = 14;
-  const MAX_SPAN_DAYS = 60;
-  const from14 = new Date(today); from14.setDate(from14.getDate()-DEFAULT_SPAN_DAYS);
+  // 작업지시(RQDate)는 미래 날짜로도 잡힐 수 있어서, 조회 종료일을 "오늘"로 두면 아직 안 온 작지를 못 찾는다 —
+  // 그래서 기본 기간을 과거 3개월 ~ 미래 2개월로 넓게 잡는다(달 단위 계산이라 월별 일수 차이는 자동 보정됨).
+  const defaultFrom = new Date(today); defaultFrom.setMonth(defaultFrom.getMonth()-3);
+  const defaultTo = new Date(today); defaultTo.setMonth(defaultTo.getMonth()+2);
   el.innerHTML = `
     <div class="panel" style="max-width:640px;">
-      <h3>SAP 작지번호로 생산 품목 조회</h3>
-      <p class="settings-desc">SAP 작지번호를 넣으면 그 기간 안에서 찾아 <b>어떤 품목(품번)을 생산하는 건인지</b>만 보여줍니다. <b>사내망(VPN) 접속 상태에서만 조회됩니다.</b> API가 SAP 작지번호로 바로 검색을 지원하지 않아 기간 내 목록을 받아 그 안에서 찾는 방식이라, 기간이 넓을수록 느려집니다 — 되는 대로 짧게 잡아주세요.</p>
+      <h3>작지번호로 생산 품목 조회</h3>
+      <p class="settings-desc">SAP 작지번호 또는 MES 작지번호를 넣으면 그 기간 안에서 찾아 <b>어떤 품목(품번)을 생산하는 건인지</b>를 보여줍니다. <b>사내망(VPN) 접속 상태에서만 조회됩니다.</b> API가 작지번호로 바로 검색을 지원하지 않아 기간 내 목록을 받아 그 안에서 찾는 방식이라, 기간이 넓을수록 느려집니다.</p>
       <div class="form-grid">
-        <div class="field"><label>SAP 작지번호 *</label><input type="text" id="mesOrderInput" placeholder="예: 4100012345"></div>
+        <div class="field"><label>작지번호 (SAP 또는 MES) *</label><input type="text" id="mesOrderInput" placeholder="예: 4100012345 (SAP) 또는 MES 작지번호"></div>
         <div class="field"><label>환경</label>
           <select id="mesEnvSelect"><option value="prod">운영 (mes.intelliantech.com)</option><option value="dev">개발 (mesdev.intelliantech.com)</option></select>
         </div>
-        <div class="field"><label>조회 시작일</label><input type="date" id="mesFromDate" value="${mesDateStr(from14)}"></div>
-        <div class="field"><label>조회 종료일</label><input type="date" id="mesToDate" value="${mesDateStr(today)}"></div>
+        <div class="field"><label>조회 시작일</label><input type="date" id="mesFromDate" value="${mesDateStr(defaultFrom)}"></div>
+        <div class="field"><label>조회 종료일</label><input type="date" id="mesToDate" value="${mesDateStr(defaultTo)}"></div>
       </div>
       <div style="margin-top:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-        <span class="muted-cell">기간:</span>
-        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="7" style="padding:4px 10px; font-size:12px;">최근 7일</button>
-        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="14" style="padding:4px 10px; font-size:12px;">최근 14일</button>
-        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="30" style="padding:4px 10px; font-size:12px;">최근 30일</button>
-        <button type="button" class="btn btn-ghost mesRangeBtn" data-days="60" style="padding:4px 10px; font-size:12px;">최근 60일(최대)</button>
+        <span class="muted-cell">더 조회(과거로 넓히기):</span>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-months="3" style="padding:4px 10px; font-size:12px;">과거 3개월</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-months="6" style="padding:4px 10px; font-size:12px;">과거 6개월</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-months="12" style="padding:4px 10px; font-size:12px;">과거 12개월</button>
+        <button type="button" class="btn btn-ghost mesRangeBtn" data-all="1" style="padding:4px 10px; font-size:12px;">전체</button>
       </div>
       <div style="margin-top:12px; display:flex; align-items:center; gap:10px;">
         <button class="btn" id="mesSearchBtn">조회</button>
         <span id="mesStatusLine" class="muted-cell"></span>
       </div>
       <div id="mesResultArea" style="margin-top:16px;"></div>
+      <div style="margin-top:18px; border-top:1px solid var(--border); padding-top:10px;">
+        <div style="font-size:12.5px; font-weight:600; color:var(--muted); margin-bottom:6px;">최근 조회 이력</div>
+        <div id="mesHistoryArea"></div>
+      </div>
     </div>
   `;
   const statusEl = document.getElementById('mesStatusLine');
   const resultEl = document.getElementById('mesResultArea');
+  const historyEl = document.getElementById('mesHistoryArea');
   const key = await fetchMesApiKey();
   if(!key){
     statusEl.textContent = 'MES API 키가 서버에 설정되어 있지 않습니다.';
@@ -2175,41 +2201,85 @@ async function renderMesLookup(){
     return;
   }
 
+  function renderHistoryList(){
+    const list = loadMesHistory();
+    if(!list.length){ historyEl.innerHTML = `<div class="comment-empty">아직 조회 이력이 없습니다.</div>`; return; }
+    historyEl.innerHTML = list.map((h,i)=> `
+      <div class="mesHistoryItem" data-idx="${i}" style="display:flex; justify-content:space-between; gap:10px; padding:6px 4px; font-size:12.5px; cursor:pointer; border-bottom:1px solid var(--border);">
+        <span>${escapeHtml(h.query)} — ${h.found ? escapeHtml((h.mNumber||'')+' '+(h.mName||'')) : '찾지 못함'}</span>
+        <span class="muted-cell" style="white-space:nowrap;">${mesRelativeTime(h.ts)}</span>
+      </div>
+    `).join('');
+    historyEl.querySelectorAll('.mesHistoryItem').forEach(row=>{
+      row.addEventListener('click', ()=>{
+        const h = loadMesHistory()[Number(row.dataset.idx)];
+        if(!h) return;
+        document.getElementById('mesOrderInput').value = h.query;
+        document.getElementById('mesSearchBtn').click();
+      });
+    });
+  }
+  renderHistoryList();
+
   el.querySelectorAll('.mesRangeBtn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      const days = Number(btn.dataset.days);
-      const from = new Date(today); from.setDate(from.getDate()-days);
+      if(btn.dataset.all){
+        // "전체"는 시작일·종료일을 둘 다 비워서 기간 조건 없는 요청이 되게 한다 — API 자체가 조건이 없으면
+        // 전체를 반환한다고 안내되어 있음(속도는 느릴 수 있음, "전체" 버튼을 누른 건 사용자의 명시적 선택).
+        document.getElementById('mesFromDate').value = '';
+        document.getElementById('mesToDate').value = '';
+        return;
+      }
+      const to = new Date(today); to.setMonth(to.getMonth()+2);
+      document.getElementById('mesToDate').value = mesDateStr(to);
+      const months = Number(btn.dataset.months);
+      const from = new Date(today); from.setMonth(from.getMonth()-months);
       document.getElementById('mesFromDate').value = mesDateStr(from);
-      document.getElementById('mesToDate').value = mesDateStr(today);
     });
   });
 
-  // 필요한 건 "SAP 작지번호 → 품번/품명"뿐이므로 그 둘을 큰 글씨로 먼저 보여주고, 나머지(상태·수량·일자 등)는
-  // 한 줄로 작게 덧붙이는 정도로만 — 표를 쭉 훑을 필요 없이 한눈에 끝나게 한다.
-  function renderResult(rows, targetOrder){
-    if(!rows.length){
-      resultEl.innerHTML = `<div class="comment-empty">"${escapeHtml(targetOrder)}" 작지번호를 이 기간 안에서 찾지 못했습니다. 기간을 넓혀서 다시 시도해 보세요.</div>`;
-      return;
-    }
-    resultEl.innerHTML = rows.map(r => `
-      <div class="panel" style="margin-bottom:10px;">
-        <div style="font-size:16.5px; font-weight:700;">${escapeHtml(String(r.MNumber ?? ''))} <span class="muted-cell" style="font-weight:400; font-size:13px;">— ${escapeHtml(String(r.MName ?? ''))}</span></div>
-        <div class="muted-cell" style="margin-top:4px; font-size:12px;">
-          SAP 작지번호 ${escapeHtml(String(r.PPOrderAX ?? ''))} · 상태 ${escapeHtml(String(r.PPProgressName ?? '-'))} · 수량 ${escapeHtml(String(r.Quantity ?? '-'))} · 작업지시일 ${escapeHtml(String(r.RQDate ?? '-'))}
+  // 하나의 SAP 작지번호는 품번 하나만 가지므로, 여러 건이 걸리더라도 목록으로 늘어놓지 않고
+  // 품번/품명 하나에 수량 합계·상태별 개수·작업지시일(들)만 모아서 한 번에 보여준다.
+  // MES 작지번호는 건마다 다 다를 수 있어서(하나의 SAP 작지번호에 여러 MES 작지번호가 걸릴 수 있음)
+  // 그중 하나만 대표로 보여주면 틀린 정보가 될 수 있으므로 표시하지 않는다 — 단, 사용자가 MES 작지번호로
+  // "직접" 검색한 경우엔 그 하나는 확실히 맞는 값이라 예외적으로 같이 보여준다.
+  function renderResult(group, searchedAs, searchedByMes){
+    if(!group.length) return null;
+    const first = group[0];
+    const totalQty = group.reduce((sum,r)=> sum + (Number(r.Quantity) || 0), 0);
+    const statusCounts = {};
+    group.forEach(r=>{
+      const label = r.PPProgressName || '(상태없음)';
+      statusCounts[label] = (statusCounts[label] || 0) + 1;
+    });
+    const statusText = Object.entries(statusCounts).map(([label,n])=> `${label} ${n}개`).join(', ');
+    const rqDates = [...new Set(group.map(r=>r.RQDate).filter(Boolean))].sort();
+    const sapOrder = String(first.PPOrderAX ?? '-');
+    const sapLine = searchedByMes
+      ? `SAP 작지번호 <b>${escapeHtml(sapOrder)}</b> <span class="muted-cell">(MES작지번호 ${escapeHtml(searchedAs)})</span>`
+      : `SAP 작지번호 <b>${escapeHtml(sapOrder)}</b>`;
+    resultEl.innerHTML = `
+      <div class="panel">
+        <div style="font-size:16.5px; font-weight:700;">${escapeHtml(String(first.MNumber ?? ''))} <span class="muted-cell" style="font-weight:400; font-size:13px;">— ${escapeHtml(String(first.MName ?? ''))}</span></div>
+        <div style="margin-top:8px; font-size:13px; display:flex; flex-direction:column; gap:4px;">
+          <div>${sapLine}</div>
+          <div>수량 합계 <b>${totalQty}</b> (${group.length}건)</div>
+          <div>상태 — ${escapeHtml(statusText)}</div>
+          <div>작업지시일 — ${escapeHtml(rqDates.join(', ') || '-')}</div>
         </div>
       </div>
-    `).join('');
+    `;
+    return { MNumber: first.MNumber, MName: first.MName };
   }
 
   document.getElementById('mesSearchBtn').addEventListener('click', async ()=>{
-    const targetOrder = document.getElementById('mesOrderInput').value.trim();
-    if(!targetOrder){ alert('SAP 작지번호를 입력해 주세요.'); return; }
-    const fromDate = document.getElementById('mesFromDate').value;
-    const toDate = document.getElementById('mesToDate').value;
-    if(!fromDate || !toDate){ alert('조회 시작일/종료일을 입력해 주세요.'); return; }
-    const spanDays = (new Date(toDate) - new Date(fromDate)) / 86400000;
-    if(spanDays < 0){ alert('종료일이 시작일보다 앞설 수 없습니다.'); return; }
-    if(spanDays > MAX_SPAN_DAYS){ alert(`한 번에 조회할 수 있는 기간은 최대 ${MAX_SPAN_DAYS}일입니다 — 기간이 넓으면 그만큼 느려집니다. 기간을 줄여주세요.`); return; }
+    // 실패해도 입력한 번호는 절대 지우지 않는다(다시 타이핑하지 않게) — 그래서 이 값을 지역변수로만 쓰고
+    // input.value를 어디서도 건드리지 않는다.
+    const searchedAs = document.getElementById('mesOrderInput').value.trim();
+    if(!searchedAs){ alert('작지번호를 입력해 주세요.'); return; }
+    const fromDate = document.getElementById('mesFromDate').value; // 비어있으면(전체) 기간 조건 없이 요청
+    const toDate = document.getElementById('mesToDate').value;      // 비어있으면(전체) 마찬가지
+    if(fromDate && toDate && new Date(toDate) < new Date(fromDate)){ alert('종료일이 시작일보다 앞설 수 없습니다.'); return; }
     const env = document.getElementById('mesEnvSelect').value;
     const base = MES_API_BASE[env];
 
@@ -2220,23 +2290,44 @@ async function renderMesLookup(){
     resultEl.innerHTML = '';
     const startedAt = performance.now();
     try{
-      const qs = new URLSearchParams({ apiKey:key, FRomRQDate:fromDate, ToRQDate:toDate });
-      const res = await fetch(base + '?' + qs.toString(), { signal: AbortSignal.timeout(20000) });
+      const params = { apiKey:key };
+      if(fromDate) params.FRomRQDate = fromDate;
+      if(toDate) params.ToRQDate = toDate;
+      const qs = new URLSearchParams(params);
+      const res = await fetch(base + '?' + qs.toString(), { signal: AbortSignal.timeout(30000) });
       if(!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       if(data.result !== true){
         statusEl.style.color = 'var(--danger, #b3423a)';
         statusEl.textContent = data.message || 'MES 조회에 실패했습니다.';
+        saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
+        renderHistoryList();
         return;
       }
       const list = Array.isArray(data.list) ? data.list : [];
-      const matched = list.filter(r => String(r.PPOrderAX||'').trim() === targetOrder);
       const elapsedSec = ((performance.now() - startedAt) / 1000).toFixed(1);
-      statusEl.textContent = `${elapsedSec}초 · 기간 내 전체 ${list.length}건 중 일치 ${matched.length}건`;
-      renderResult(matched, targetOrder);
+      // SAP 작지번호(PPOrderAX)로 먼저 찾아보고, 없으면 MES 작지번호(PPOrder)로 찾는다 — 어느 쪽으로
+      // 찾았는지에 따라 결과에 MES 작지번호를 예외적으로 같이 보여줄지가 달라진다(위 renderResult 참고).
+      const bySap = list.find(r => String(r.PPOrderAX||'').trim() === searchedAs);
+      const byMes = !bySap ? list.find(r => String(r.PPOrder||'').trim() === searchedAs) : null;
+      const anyMatch = bySap || byMes;
+      let group = [];
+      if(anyMatch){
+        const sapOrder = String(anyMatch.PPOrderAX||'').trim();
+        group = sapOrder ? list.filter(r => String(r.PPOrderAX||'').trim() === sapOrder) : [anyMatch];
+      }
+      statusEl.textContent = `${elapsedSec}초 · 기간 내 전체 ${list.length}건 중 관련 ${group.length}건`;
+      const resultSummary = renderResult(group, searchedAs, !!byMes);
+      if(!group.length){
+        resultEl.innerHTML = `<div class="comment-empty">"${escapeHtml(searchedAs)}"에 해당하는 작지를 이 기간 안에서 찾지 못했습니다. 기간을 넓혀서 다시 시도해 보세요.</div>`;
+      }
+      saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: !!resultSummary, mNumber: resultSummary && resultSummary.MNumber, mName: resultSummary && resultSummary.MName });
+      renderHistoryList();
     }catch(err){
       statusEl.style.color = 'var(--danger, #b3423a)';
       statusEl.textContent = 'MES 호출에 실패했습니다 — 사내망(VPN) 연결 상태를 확인해 주세요. (' + (err.message||err) + ')';
+      saveMesHistoryEntry({ ts: Date.now(), query: searchedAs, found: false });
+      renderHistoryList();
     }finally{
       btn.disabled = false;
     }
