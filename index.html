@@ -1040,14 +1040,29 @@ async function flushBoardSaves(){
   const activityBatch=boardSync.outboxActivity.splice(0, boardSync.outboxActivity.length);
   const configBatch=boardSync.outboxConfig; boardSync.outboxConfig=null;
 
-  await Promise.all(taskIds.map(async id=>{
+  // 한꺼번에 수십~수백 건이 대기열에 쌓여도(대량 가져오기, 복구 등) 전부 동시에 쏘지 않고
+  // CONCURRENCY개씩 나눠 보낸다 — 서버(Apps Script)에 순간적으로 요청이 몰려 "Failed to fetch"가
+  // 나는 것을 막기 위함.
+  const CONCURRENCY = 6;
+  async function runLimited(items, worker){
+    let i = 0;
+    async function runNext(){
+      if(i >= items.length) return;
+      const item = items[i++];
+      await worker(item);
+      await runNext();
+    }
+    await Promise.all(Array.from({length: Math.min(CONCURRENCY, items.length)}, runNext));
+  }
+
+  await runLimited(taskIds, async id=>{
     try{ await pushOneTask(id); }
     catch(e){ hadError=true; boardSync.error=e.message; }
-  }));
-  await Promise.all(deleteIds.map(async id=>{
+  });
+  await runLimited(deleteIds, async id=>{
     try{ await boardRequest('boardDeleteTask', {id, userName:currentUserLabel()}); boardSync.outboxDeleteIds.delete(id); }
     catch(e){ hadError=true; boardSync.error=e.message; }
-  }));
+  });
   for(const entry of activityBatch){
     try{ await boardRequest('boardAppendActivity', {entry}); }
     catch(e){ hadError=true; boardSync.error=e.message; boardSync.outboxActivity.push(entry); }
@@ -1143,9 +1158,29 @@ function applyServerTasks(serverTasks){
 // 다음에 열었을 때 서버의 예전 데이터로 조용히 덮여 사라지는 문제가 있었다.
 function recoverUnsentBoardSaves(){
   try{
+    // 이 시점(applyServerTasks 이후)엔 lastKnownTasksJson이 "서버의 현재 상태"로 채워져 있다.
+    // 그 기준과 실제로 다른 카드만 골라 복구해야 한다 — 그냥 diffAndQueueTasks에 통째로 넘기면
+    // (서버 스냅샷을 받기 전에 호출했을 때 그랬듯) 기준이 없어서 전부 "변경됨"으로 오판해
+    // 업무 전체가 재전송 대기열에 쌓이는 사고가 난다.
     const unsentTasks = localStorage.getItem('ppe_board_unsent:tasks');
     if(unsentTasks){
-      diffAndQueueTasks(JSON.parse(unsentTasks));
+      const localTasks = JSON.parse(unsentTasks);
+      let restored = 0;
+      localTasks.forEach(localTask=>{
+        if(!localTask || !localTask.id) return;
+        const knownJson = boardSync.lastKnownTasksJson.get(localTask.id);
+        const localJson = JSON.stringify(localTask);
+        if(knownJson === localJson) return; // 서버와 이미 같음 — 다시 보낼 필요 없음
+        const idx = TASKS.findIndex(t=>t.id===localTask.id);
+        if(idx>=0) TASKS[idx] = localTask; else TASKS.push(localTask);
+        boardSync.outboxTaskIds.add(localTask.id);
+        boardSync.outboxDeleteIds.delete(localTask.id);
+        restored++;
+      });
+      if(restored){
+        console.log('이전 세션에서 서버로 못 보낸 카드 ' + restored + '건을 복구했습니다.');
+        localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS));
+      }
     }
     const unsentActivity = localStorage.getItem('ppe_board_unsent:activity');
     if(unsentActivity){
@@ -1166,7 +1201,6 @@ function recoverUnsentBoardSaves(){
 
 async function startBoardShared(){
   boardSync.booting=false;
-  recoverUnsentBoardSaves();
   boardSyncStatus();
   try{
     const [taskState, configState, activityState] = await Promise.all([
@@ -1177,6 +1211,8 @@ async function startBoardShared(){
     window.storage.mode='google';
     boardSync.revision=taskState.revision;
     applyServerTasks(taskState.tasks);
+    // 서버 스냅샷을 반영해서 비교 기준이 세워진 다음에 복구해야 안전하다(순서 중요).
+    recoverUnsentBoardSaves();
     USERS=configState.users; MODELS=configState.models; CHECKLISTS=configState.checklists;
     ACTIVITY_LOG=activityState.activity;
     localStorage.setItem(boardLocalKey(USERS_KEY,true), JSON.stringify(USERS));
