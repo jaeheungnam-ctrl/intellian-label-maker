@@ -406,6 +406,26 @@
   .k-tag{
     font-size:9.5px; font-weight:700; padding:2px 8px; border-radius:999px; letter-spacing:.2px;
   }
+  /* 공유 서버 연결 안내(토큰) — 연결이 끊겨 있는 동안 화면 아래에 계속 표시 */
+  #authBanner{
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:9000; width:min(760px, calc(100vw - 28px));
+    display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:12px;
+    background:color-mix(in srgb, #ff8a3d 16%, var(--surface)); border:1px solid #ff8a3d; color:var(--ink);
+    box-shadow:0 10px 30px rgba(0,0,0,.28); font-size:13px; line-height:1.5;
+  }
+  #authBanner[hidden]{display:none;}
+  #authBanner .auth-banner-text{flex:1;}
+  #authBanner .btn{flex:none; white-space:nowrap;}
+  .token-dialog-backdrop{position:fixed; inset:0; z-index:9100; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; padding:16px;}
+  .token-dialog{width:min(520px,100%); background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:14px; padding:22px 22px 18px; box-shadow:0 20px 50px rgba(0,0,0,.4);}
+  .token-dialog h3{margin:0 0 8px; font-size:16px;}
+  .token-dialog p{margin:0 0 12px; font-size:12.8px; color:var(--muted); line-height:1.5;}
+  .token-dialog input{width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--paper); color:var(--ink); font-size:13px; font-family:"SFMono-Regular", Consolas, monospace;}
+  .token-dialog input:focus{outline:none; border-color:var(--primary);}
+  .token-dialog-msg{min-height:20px; margin:8px 0 2px; font-size:12.5px; color:var(--muted);}
+  .token-dialog-msg.ok{color:var(--primary-ink); font-weight:600;}
+  .token-dialog-msg.err{color:#d9534f; font-weight:600;}
+  .token-dialog-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:8px;}
   /* 등록된 지 24시간 안 된 업무에 붙는 표시 — 칸반 보드를 훑어볼 때 새로 들어온 건을 바로 알아채도록 */
   .k-new-badge{
     font-size:9.5px; font-weight:800; padding:2px 7px; border-radius:999px; letter-spacing:.4px;
@@ -955,9 +975,13 @@ async function boardRequest(action, body, query={}){
   if(!res.ok) throw Error('공유 서버 응답 오류 '+res.status);
   const data=await res.json();
   if(data.ok!==true){
-    if(data.code==='AUTH') throw Error('AUTH:'+(data.error||'토큰이 올바르지 않습니다.'));
+    if(data.code==='AUTH'){
+      setBoardAuthBanner(true); // 어떤 요청이든 인증에 실패하면 "연결 끊김" 안내와 연결 버튼을 띄운다
+      throw Error(/^AUTH:/.test(data.error||'') ? data.error : 'AUTH:'+(data.error||'토큰이 올바르지 않습니다.'));
+    }
     throw Error(data.error||'업무 공유 API가 없습니다. Code.gs를 교체하고 새 버전으로 배포해 주세요.');
   }
+  if(boardSync.authBannerOn) setBoardAuthBanner(false); // 요청이 성공하면 연결된 것 — 안내 숨김
   return data;
 }
 
@@ -1274,9 +1298,74 @@ async function startBoardShared(){
 // 서버가 토큰 인증(AUTH_TOKEN)을 요구하는데 이 브라우저에 토큰이 없거나 틀린 경우 — 화면엔 "연결 확인 필요"만
 // 떠서 원인을 알기 어려우므로, 어디에 입력하면 되는지 한 번만 안내한다.
 function notifyBoardAuthError(message){
-  if(!/^AUTH:/.test(message||'') || boardSync.authWarned) return;
-  boardSync.authWarned = true;
-  setTimeout(()=>alert('공유 서버가 토큰 인증을 요구합니다.\n\n왼쪽 메뉴 "기본 설정" → "PC 간 공유 설정" 탭에 관리자에게 받은 공유 토큰을 입력하고 [주소·토큰 저장 및 연결 확인]을 누른 뒤 페이지를 새로고침해 주세요.\n(그 전까지는 이 PC에만 저장되며, 공유 서버에는 반영되지 않습니다.)'), 0);
+  if(/^AUTH:/.test(message||'')) setBoardAuthBanner(true);
+}
+
+// ---- 공유 서버 연결 안내 (토큰) ----
+// 서버가 토큰을 요구하는데 이 브라우저에 토큰이 없거나 틀리면 화면 아래에 안내와 [토큰 연결하기] 버튼을 띄우고,
+// 연결이 확인될 때까지(요청이 성공할 때까지) 계속 보여준다. 폴링·저장 등 모든 요청이 인증 상태를 검사하므로
+// 나중에 토큰이 바뀌어 연결이 끊겨도 자동으로 다시 나타난다.
+// 토큰은 공개 코드에 넣을 수 없으므로(누구나 볼 수 있음) 관리자에게 받은 링크/토큰을 붙여넣는 방식이다.
+function setBoardAuthBanner(on){
+  boardSync.authBannerOn = !!on;
+  let el = document.getElementById('authBanner');
+  if(on){
+    if(!el){
+      el = document.createElement('div'); el.id = 'authBanner'; el.setAttribute('role','alert');
+      el.innerHTML = '<span class="auth-banner-text"><b>공유 서버와 연결되어 있지 않습니다.</b> 지금은 이 PC에만 저장되고 다른 사람에게 반영되지 않습니다. 관리자에게 받은 링크 또는 토큰을 등록해 주세요.</span><button type="button" class="btn" id="authBannerBtn">🔑 토큰 연결하기</button>';
+      document.body.appendChild(el);
+      el.querySelector('#authBannerBtn').addEventListener('click', openTokenConnectDialog);
+    }
+    el.hidden = false;
+  } else if(el){
+    el.hidden = true;
+  }
+}
+// 입력값이 링크(…#token=값)면 값만 뽑고, 아니면 입력 자체를 토큰으로 본다. 서버에 실제로 확인해 본 뒤에만 저장한다.
+async function connectWithToken(raw){
+  const text = String(raw||'').trim();
+  const m = /token=([^&\s#]+)/.exec(text);
+  let token = m ? m[1] : text;
+  try{ token = decodeURIComponent(token); }catch(e){}
+  if(!token) return {ok:false, msg:'링크 또는 토큰을 붙여넣어 주세요.'};
+  try{
+    const u = new URL(boardSync.url); u.searchParams.set('action','boardRevision'); u.searchParams.set('token', token);
+    const res = await fetch(u.href, {redirect:'follow', signal:AbortSignal.timeout(15000)});
+    const data = await res.json();
+    if(data.ok!==true) return {ok:false, msg: data.code==='AUTH' ? '토큰이 올바르지 않습니다. 관리자에게 받은 값을 다시 확인해 주세요.' : (data.error||'연결에 실패했습니다.')};
+  }catch(e){ return {ok:false, msg:'서버에 연결하지 못했습니다. 네트워크를 확인해 주세요. ('+e.message+')'}; }
+  localStorage.setItem('ppe_board_api_token', token);
+  boardSync.token = token;
+  return {ok:true};
+}
+function openTokenConnectDialog(){
+  if(document.getElementById('tokenDialog')) return;
+  const wrap = document.createElement('div'); wrap.id = 'tokenDialog'; wrap.className = 'token-dialog-backdrop';
+  wrap.innerHTML = `<div class="token-dialog" role="dialog" aria-modal="true" aria-label="공유 서버 연결">
+      <h3>🔑 공유 서버 연결</h3>
+      <p>관리자에게 받은 <b>링크 전체</b> 또는 <b>토큰</b>을 아래에 붙여넣고 [연결]을 누르세요.</p>
+      <input type="text" id="tokenDialogInput" placeholder="https://…#token=…  또는  토큰" autocomplete="off" spellcheck="false">
+      <div class="token-dialog-msg" id="tokenDialogMsg" aria-live="polite"></div>
+      <div class="token-dialog-actions"><button type="button" class="btn btn-ghost" id="tokenDialogCancel">닫기</button><button type="button" class="btn" id="tokenDialogOk">연결</button></div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const input = wrap.querySelector('#tokenDialogInput'), msg = wrap.querySelector('#tokenDialogMsg'), ok = wrap.querySelector('#tokenDialogOk');
+  const close = ()=> wrap.remove();
+  const submit = async ()=>{
+    ok.disabled = true; msg.className = 'token-dialog-msg'; msg.textContent = '연결 확인 중…';
+    const r = await connectWithToken(input.value);
+    if(r.ok){
+      msg.className = 'token-dialog-msg ok'; msg.textContent = '연결되었습니다. 화면을 새로고침합니다…';
+      setTimeout(()=> location.reload(), 700);
+    } else {
+      msg.className = 'token-dialog-msg err'; msg.textContent = r.msg; ok.disabled = false;
+    }
+  };
+  ok.addEventListener('click', submit);
+  wrap.querySelector('#tokenDialogCancel').addEventListener('click', close);
+  wrap.addEventListener('mousedown', e=>{ if(e.target===wrap) close(); });
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing){ e.preventDefault(); submit(); } if(e.key==='Escape'){ e.stopPropagation(); close(); } });
+  setTimeout(()=> input.focus(), 0);
 }
 
 async function refreshBoardShared(){
