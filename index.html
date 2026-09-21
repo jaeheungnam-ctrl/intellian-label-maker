@@ -906,6 +906,18 @@
 
 const BOARD_DEFAULT_API='https://script.google.com/macros/s/AKfycbwxBnE9j7VfeX-vwd8W-mn2tgYx5QqjD5DHVB2pp1U25WtOjOQa7MMZJmhZ0t-_H-09/exec';
 
+// 토큰 자동 등록 링크: 주소 뒤에 #token=값 을 붙여 연 경우(예: .../index.html#token=abc) 그 값을 이 브라우저에
+// 저장하고, 주소창에서는 바로 지운다. "#" 뒤의 값은 서버·GitHub로 전송되지 않고 이 브라우저에만 남으므로,
+// 토큰을 코드(공개 저장소)에 넣지 않고도 팀원이 링크만 열면 설정 화면에 직접 입력하지 않아도 된다.
+(function adoptTokenFromLink(){
+  try{
+    const m = /[#&]token=([^&]+)/.exec(location.hash);
+    if(!m) return;
+    localStorage.setItem('ppe_board_api_token', decodeURIComponent(m[1]));
+    history.replaceState(null, '', location.pathname + location.search);
+  }catch(e){}
+})();
+
 // boardSync: 예전에는 tasks 배열 전체를 outbox에 넣어 통째로 저장했지만,
 // 이제는 "바뀐 카드 id" 단위로만 서버에 반영합니다. 그래서 서로 다른 카드를
 // 여러 명이 동시에 고쳐도 서버 쪽 잠금 시간이 아주 짧게 끝납니다.
