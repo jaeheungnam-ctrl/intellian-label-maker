@@ -962,7 +962,7 @@ function boardLocalKey(key,shared){ return 'ppe_board_'+(shared?'data:':'device:
 async function boardRequest(action, body, query={}){
   const u=new URL(boardSync.url);
   if(u.hostname!=='script.google.com'||!/^\/macros\/s\/.+\/exec$/.test(u.pathname)) throw Error('Apps Script /exec 배포 URL이 아닙니다.');
-  const options={redirect:'follow', signal:AbortSignal.timeout(25000)};
+  const options={redirect:'follow'};
   if(body){
     options.method='POST'; options.headers={'Content-Type':'text/plain;charset=utf-8'};
     options.body=JSON.stringify({action, token:boardSync.token, ...body});
@@ -971,7 +971,15 @@ async function boardRequest(action, body, query={}){
     if(boardSync.token) u.searchParams.set('token', boardSync.token);
     Object.entries(query).forEach(([k,v])=>u.searchParams.set(k,v));
   }
-  const res=await fetch(u.href, options);
+  // 느린 망에서도 견디도록 대기 60초. 조회(GET)는 멱등이라 시간 초과·통신 실패 시 한 번 더 시도한다(저장 POST는 중복 방지를 위해 재시도 안 함).
+  let res;
+  for(let attempt=0; ; attempt++){
+    try{ res=await fetch(u.href, {...options, signal:AbortSignal.timeout(60000)}); break; }
+    catch(netErr){
+      if(!body && attempt===0) continue;
+      throw Error('공유 서버에서 응답이 없습니다. 이 PC의 네트워크(VPN·프록시·보안 프로그램)가 구글 스크립트 주소(script.google.com, script.googleusercontent.com)를 막거나 매우 느릴 수 있습니다. ('+netErr.message+')');
+    }
+  }
   if(!res.ok) throw Error('공유 서버 응답 오류 '+res.status);
   const data=await res.json();
   if(data.ok!==true){
