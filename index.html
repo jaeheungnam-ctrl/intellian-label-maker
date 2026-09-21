@@ -1306,15 +1306,24 @@ function notifyBoardAuthError(message){
 // 연결이 확인될 때까지(요청이 성공할 때까지) 계속 보여준다. 폴링·저장 등 모든 요청이 인증 상태를 검사하므로
 // 나중에 토큰이 바뀌어 연결이 끊겨도 자동으로 다시 나타난다.
 // 토큰은 공개 코드에 넣을 수 없으므로(누구나 볼 수 있음) 관리자에게 받은 링크/토큰을 붙여넣는 방식이다.
+// 회사 구글 계정 자동 연결 페이지 주소(Apps Script 웹 앱 — 접근 권한이 "조직 내 사용자"로 제한되어 회사 계정으로
+// 로그인한 사람만 열 수 있고, 거기서 토큰이 담긴 이 사이트 주소로 되돌려 보낸다). 토큰 자체는 이 코드에 없다.
+// 비어 있으면 자동 연결 버튼은 나타나지 않고 붙여넣기 방식만 쓴다.
+var TOKEN_PORTAL_URL = 'https://script.google.com/a/macros/intelliantech.com/s/AKfycbwIWpJYw92UCs1tkUMX2Ajf2f-tP5bODDavykwp43nCUN-y-fAIGIZxp85f_WvtAuNXZA/exec';
 function setBoardAuthBanner(on){
   boardSync.authBannerOn = !!on;
   let el = document.getElementById('authBanner');
   if(on){
     if(!el){
       el = document.createElement('div'); el.id = 'authBanner'; el.setAttribute('role','alert');
-      el.innerHTML = '<span class="auth-banner-text"><b>공유 서버와 연결되어 있지 않습니다.</b> 지금은 이 PC에만 저장되고 다른 사람에게 반영되지 않습니다. 관리자에게 받은 링크 또는 토큰을 등록해 주세요.</span><button type="button" class="btn" id="authBannerBtn">🔑 토큰 연결하기</button>';
+      const auto = TOKEN_PORTAL_URL ? '<button type="button" class="btn" id="authBannerAuto">🏢 회사 계정으로 자동 연결</button>' : '';
+      el.innerHTML = '<span class="auth-banner-text"><b>공유 서버와 연결되어 있지 않습니다.</b> 지금은 이 PC에만 저장되고 다른 사람에게 반영되지 않습니다. '
+        + (TOKEN_PORTAL_URL ? '아래 버튼을 눌러 회사 구글 계정으로 연결해 주세요.' : '관리자에게 받은 링크 또는 토큰을 등록해 주세요.') + '</span>'
+        + auto + '<button type="button" class="btn' + (auto ? ' btn-ghost' : '') + '" id="authBannerBtn">🔑 ' + (auto ? '링크·토큰 붙여넣기' : '토큰 연결하기') + '</button>';
       document.body.appendChild(el);
       el.querySelector('#authBannerBtn').addEventListener('click', openTokenConnectDialog);
+      const autoBtn = el.querySelector('#authBannerAuto');
+      if(autoBtn) autoBtn.addEventListener('click', ()=>{ location.href = TOKEN_PORTAL_URL; });
     }
     el.hidden = false;
   } else if(el){
