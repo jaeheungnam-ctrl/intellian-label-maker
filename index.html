@@ -1436,6 +1436,7 @@ function renderSyncSettings(){
     <input id="boardApiToken" type="text" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.token)}" placeholder="토큰을 설정하지 않았다면 비워두세요">
     <button class="btn" id="boardConnect">주소·토큰 저장 및 연결 확인</button>
     <button class="btn btn-ghost" id="boardExportLocal" style="margin-left:8px">현재 PC 업무 백업</button>
+    <button class="btn btn-ghost" id="boardDiagnose" style="margin-left:8px">🩺 연결 진단</button>
     <p class="dash-note">Code.gs를 교체한 뒤 새 버전으로 배포하고, 편집기에서 migrateToRowStorage()를 한 번 실행해 기존 데이터를 이전하세요. 연결 성공 후 페이지를 새로고침하면 공유 데이터를 불러옵니다.</p>
     <div id="boardConnectResult" style="margin-top:10px"></div></div>`;
   document.getElementById('boardConnect').onclick=async()=>{
@@ -1453,6 +1454,32 @@ function renderSyncSettings(){
     }catch(e){
       boardSync.url=oldUrl; boardSync.token=oldToken; result.textContent=e.message;
     }
+  };
+  // 이 PC에서 공유 서버까지 어디서 막히는지 단계별로 확인한다(구글 스크립트 주소 → 응답 전달 주소 → 실제 API 호출).
+  document.getElementById('boardDiagnose').onclick=async()=>{
+    const result=document.getElementById('boardConnectResult');
+    const lines=[]; const show=()=>{ result.innerHTML=lines.map(l=>'<div>'+escapeHtml(l)+'</div>').join(''); };
+    const probe=async(label, url, ms)=>{
+      const t0=performance.now();
+      try{ await fetch(url,{mode:'no-cors', cache:'no-store', signal:AbortSignal.timeout(ms)}); lines.push('✅ '+label+' — 도달 ('+Math.round(performance.now()-t0)+'ms)'); }
+      catch(e){ lines.push('❌ '+label+' — 실패: '+e.name+' ('+Math.round(performance.now()-t0)+'ms)'); }
+      show();
+    };
+    lines.push('진단 중… (최대 1~2분)'); show();
+    const url=document.getElementById('boardApiUrl').value.trim(), token=document.getElementById('boardApiToken').value.trim();
+    lines.push('브라우저 온라인: '+(navigator.onLine?'예':'아니오')+' / 저장된 주소: '+(url?url.slice(0,48)+'…'+url.slice(-12):'(없음)')+' / 토큰: '+(token?'있음':'없음'));
+    await probe('1) script.google.com 접속', 'https://script.google.com/favicon.ico', 15000);
+    await probe('2) script.googleusercontent.com 접속(응답 전달 주소)', 'https://script.googleusercontent.com/favicon.ico', 15000);
+    await probe('3) www.google.com 접속(일반 구글 통신 비교용)', 'https://www.google.com/favicon.ico', 15000);
+    try{
+      const u=new URL(url); u.searchParams.set('action','boardRevision'); if(token) u.searchParams.set('token',token);
+      const t0=performance.now();
+      const res=await fetch(u.href,{redirect:'follow', signal:AbortSignal.timeout(60000)});
+      const data=await res.json(); const ms=Math.round(performance.now()-t0);
+      lines.push((data.ok===true?'✅':'⚠️')+' 4) 실제 서버 호출 — HTTP '+res.status+', '+(data.ok===true?'정상':(data.code==='AUTH'?'토큰 불일치(AUTH)':'오류: '+(data.error||'?')))+' ('+ms+'ms)');
+    }catch(e){ lines.push('❌ 4) 실제 서버 호출 — 실패: '+e.name+' / '+e.message); }
+    lines.push('※ 1~3이 ❌이면 이 PC 네트워크가 막는 것, 1~3은 ✅인데 4가 ❌이면 저장된 주소가 잘못됐거나 서버 문제입니다. 이 화면을 캡처해서 알려 주세요.');
+    show();
   };
   document.getElementById('boardExportLocal').onclick=()=>{
     const blob=new Blob([JSON.stringify({tasks:TASKS, activity:ACTIVITY_LOG, users:USERS, models:MODELS, checklists:CHECKLISTS}, null, 2)], {type:'application/json'});
