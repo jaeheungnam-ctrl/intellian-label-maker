@@ -2360,6 +2360,21 @@ function escapeHtml(s){
   // 바꿔버리는 경우가 있어서, 공유 저장소에서 내려온 값은 숫자로 올 수 있다. 항상 String으로 감싼다.
   return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
+// 활동 로그에 "무엇이 바뀌었는지"를 남기려면 HTML(비고)이든 일반 텍스트든 사람이 읽을 짧은 요약이
+// 필요하다 — 태그를 지우고 공백을 정리한 뒤 길면 자른다.
+function plainTextSnippet_(html, max){
+  const s = String(html==null?'':html).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();
+  if(!s) return '(비어있음)';
+  return s.length>max ? s.slice(0,max)+'…' : s;
+}
+// 카드 한 항목이 바뀐 내용을 "이전값 → 새값" 형태의 로그 한 줄로 만든다. 체크리스트류(객체)는 값이
+// 길고 의미가 없어 무엇이 바뀌었다는 사실만 남긴다.
+function describeFieldChange_(label, before, after){
+  if(before!==null&&typeof before==='object' || after!==null&&typeof after==='object'){
+    return escapeHtml(label)+' 변경됨';
+  }
+  return escapeHtml(label)+': "'+escapeHtml(plainTextSnippet_(before,40))+'" → "'+escapeHtml(plainTextSnippet_(after,40))+'"';
+}
 // ---------- 업무 비고칸(rich note): 링크/이미지 붙여넣기 ----------
 // t.note는 예전엔 순수 텍스트였는데, 이제부터는 우리가 직접 만든 안전한 HTML 조각(escape된 텍스트 +
 // 우리가 넣은 <img>/<a>/<br>만)을 담는다. 그 전에 저장된 순수 텍스트 노트와 구분하려고, "우리가 만든
@@ -4581,8 +4596,13 @@ function openDetail(id){
     mutate(t);
     await persist();
     const labels={title:'제목',type:'유형',model:'MODEL',assignee:'담당자',dueRequest:'완료요청일',receivedDate:'수신일',endDate:'완료일',note:'비고',ecnStep:'ECN STEP 1',actionItems:'체크 항목',materialLists:'신규자재 목록',partNumber:'품번',link:'업무 링크',preAppliedDocNo:'선적용 문서번호'};
-    const changes=Object.keys(labels).filter(key=>JSON.stringify(before[key])!==JSON.stringify(t[key])).map(key=>labels[key]);
-    if(changes.length)await logActivity('update', '<b>'+escapeHtml(currentUserLabel())+'</b>님이 "<b>'+escapeHtml(t.title)+'</b>"의 '+changes.map(escapeHtml).join(', ')+'을(를) 변경했습니다.',t.id);
+    const changedKeys=Object.keys(labels).filter(key=>JSON.stringify(before[key])!==JSON.stringify(t[key]));
+    if(changedKeys.length){
+      // 필드명만 나열하면(예: "비고을(를) 변경했습니다") 나중에 로그를 봐도 무엇을 어떻게 고쳤는지 알 수
+      // 없어서, 짧은 이전값→새값도 함께 남긴다.
+      const detail = changedKeys.map(key=>describeFieldChange_(labels[key], before[key], t[key])).join('<br>');
+      await logActivity('update', '<b>'+escapeHtml(currentUserLabel())+'</b>님이 "<b>'+escapeHtml(t.title)+'</b>"의 '+changedKeys.map(k=>escapeHtml(labels[k])).join(', ')+'을(를) 변경했습니다.<br>'+detail,t.id);
+    }
     if(document.getElementById('overlay').classList.contains('open'))boardViewDirty=true;else renderCurrent();
   };
 
