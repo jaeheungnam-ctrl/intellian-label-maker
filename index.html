@@ -167,6 +167,10 @@
   .save-status-dot{width:7px; height:7px; border-radius:50%; background:#8fae94; flex:0 0 auto;}
   .save-status.pending .save-status-dot{background:var(--warn, #b8860b); animation:saveDotPulse 1.1s ease-in-out infinite;}
   .save-status.error .save-status-dot{background:var(--danger, #b3423a);}
+  .login-top-btn{margin-left:6px; padding:5px 11px; border-radius:8px; border:1px solid var(--primary); background:var(--primary); color:#fff; font:inherit; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;}
+  .login-top-btn:hover{filter:brightness(1.08);}
+  .login-top-btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .login-top-btn[hidden]{display:none;}
   @keyframes saveDotPulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 
   /* ---------- process tab ---------- */
@@ -406,26 +410,6 @@
   .k-tag{
     font-size:9.5px; font-weight:700; padding:2px 8px; border-radius:999px; letter-spacing:.2px;
   }
-  /* 공유 서버 연결 안내(토큰) — 연결이 끊겨 있는 동안 화면 아래에 계속 표시 */
-  #authBanner{
-    position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:9000; width:min(760px, calc(100vw - 28px));
-    display:flex; align-items:center; gap:14px; padding:12px 16px; border-radius:12px;
-    background:color-mix(in srgb, #ff8a3d 16%, var(--surface)); border:1px solid #ff8a3d; color:var(--ink);
-    box-shadow:0 10px 30px rgba(0,0,0,.28); font-size:13px; line-height:1.5;
-  }
-  #authBanner[hidden]{display:none;}
-  #authBanner .auth-banner-text{flex:1;}
-  #authBanner .btn{flex:none; white-space:nowrap;}
-  .token-dialog-backdrop{position:fixed; inset:0; z-index:9100; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; padding:16px;}
-  .token-dialog{width:min(520px,100%); background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:14px; padding:22px 22px 18px; box-shadow:0 20px 50px rgba(0,0,0,.4);}
-  .token-dialog h3{margin:0 0 8px; font-size:16px;}
-  .token-dialog p{margin:0 0 12px; font-size:12.8px; color:var(--muted); line-height:1.5;}
-  .token-dialog input{width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--paper); color:var(--ink); font-size:13px; font-family:"SFMono-Regular", Consolas, monospace;}
-  .token-dialog input:focus{outline:none; border-color:var(--primary);}
-  .token-dialog-msg{min-height:20px; margin:8px 0 2px; font-size:12.5px; color:var(--muted);}
-  .token-dialog-msg.ok{color:var(--primary-ink); font-weight:600;}
-  .token-dialog-msg.err{color:#d9534f; font-weight:600;}
-  .token-dialog-actions{display:flex; justify-content:flex-end; gap:8px; margin-top:8px;}
   /* 동시 수정 비교 화면 — 좌(내 것)/우(상대 것), 다른 부분은 음영, 고른 쪽은 테두리 강조 */
   .cf-backdrop{position:fixed; inset:0; z-index:9200; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; padding:16px;}
   .cf-dialog{width:min(920px,100%); max-height:calc(100vh - 32px); overflow:auto; background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:14px; padding:22px 22px 16px; box-shadow:0 20px 50px rgba(0,0,0,.4); box-sizing:border-box;}
@@ -930,7 +914,7 @@
         <h1 id="pageTitle">업무 프로세스 안내</h1>
         <div class="sub" id="pageSub">신규/변경 자재 등록 요청이 접수된 뒤 완료까지 거치는 단계입니다.</div>
       </div>
-      <div class="save-status" id="saveStatusTop" title=""><span class="save-status-dot"></span><span id="saveStatusTopText">저장 상태 확인 중…</span></div>
+      <div class="save-status" id="saveStatusTop" title=""><span class="save-status-dot"></span><span id="saveStatusTopText">저장 상태 확인 중…</span><button type="button" class="login-top-btn" id="loginTopBtn" hidden>🏢 회사 계정으로 로그인</button></div>
     </div>
 
     <section id="view-dashboard"></section>
@@ -1344,11 +1328,21 @@ function reconnectNow_(){
   connectBoardShared();
 }
 
+function syncSettingsStateHtml_(){
+  const state = boardSync.authBannerOn ? '로그인이 필요합니다 — 오른쪽 위 [회사 계정으로 로그인]을 눌러 주세요'
+    : boardSync.connected ? '공유 서버 연결됨'
+    : (boardSync.everConnected || !boardSync.loading) ? '공유 연결 끊김 — 자동 재연결 중(수정 내용은 이 PC에 보관 후 연결되면 자동 저장)'
+    : '연결 확인 중…';
+  const err = (!boardSync.connected && boardSync.error && !boardSync.authBannerOn) ? `<br><span style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</span>` : '';
+  return `<b>${state}</b>${boardSync.pending?` · 보낼 목록 ${boardSync.pending}건`:''}${err}`;
+}
 function boardSyncStatus(){
   boardSync.pending = pendingCount_();
+  { const s=document.getElementById('syncSettingsState'); if(s) s.innerHTML = syncSettingsStateHtml_(); }
   const el=document.getElementById('syncText');
   if(el){
-    el.textContent = !boardSync.connected
+    el.textContent = boardSync.authBannerOn ? '로그인 필요 · 수정 내용은 이 PC에 보관'
+      : !boardSync.connected
         ? (boardSync.everConnected || !boardSync.loading ? `공유 연결 끊김 · 재연결 중 · 보낼 목록 ${boardSync.pending}건 이 PC에 보관` : 'PC 데이터 표시 중 · 공유 연결 확인 중')
       : boardSync.dirty ? `일부 카드 저장 재시도 중 (${boardSync.taskRetry.size}건)`
       : boardSync.pending ? '이 PC에 저장됨 · 공유 저장 중'
@@ -1663,6 +1657,17 @@ function renderSaveStatusTop(){
   const txt = document.getElementById('saveStatusTopText');
   if(!wrap || !txt) return;
   wrap.classList.remove('pending','error');
+  const loginBtn = document.getElementById('loginTopBtn');
+  if(loginBtn){
+    if(!loginBtn.dataset.wired){ loginBtn.dataset.wired='1'; loginBtn.addEventListener('click', goToLoginPortal_); }
+    loginBtn.hidden = !(boardSync.authBannerOn && TOKEN_PORTAL_URL);
+  }
+  if(boardSync.authBannerOn){
+    wrap.classList.add('error');
+    txt.textContent = '로그인이 필요합니다' + (boardSync.pending ? ` · 보낼 목록 ${boardSync.pending}건 이 PC에 보관 중(로그인하면 자동 저장)` : '');
+    wrap.title = '회사 구글 계정으로 로그인하면 자동으로 연결됩니다.';
+    return;
+  }
   const pendingNames = ()=>[...boardSync.pendingTasks.keys()].map(id=>{ const t=TASKS.find(x=>x.id===id); return t ? (t.title||id) : id; });
   if(!boardSync.connected && (boardSync.everConnected || !boardSync.loading)){
     wrap.classList.add('error');
@@ -1866,72 +1871,29 @@ function notifyBoardAuthError(message){
 // 로그인한 사람만 열 수 있고, 거기서 토큰이 담긴 이 사이트 주소로 되돌려 보낸다). 토큰 자체는 이 코드에 없다.
 // 비어 있으면 자동 연결 버튼은 나타나지 않고 붙여넣기 방식만 쓴다.
 var TOKEN_PORTAL_URL = 'https://script.google.com/a/macros/intelliantech.com/s/AKfycbwIWpJYw92UCs1tkUMX2Ajf2f-tP5bODDavykwp43nCUN-y-fAIGIZxp85f_WvtAuNXZA/exec';
+// 로그인(토큰)이 필요한 상태를 오른쪽 위 저장 상태 자리에 [회사 계정으로 로그인] 버튼으로 표시한다.
+// 사용자는 토큰을 보거나 입력하지 않는다 — 회사 구글 계정 확인 페이지가 토큰을 대신 넘겨준다.
 function setBoardAuthBanner(on){
   boardSync.authBannerOn = !!on;
-  let el = document.getElementById('authBanner');
-  if(on){
-    if(!el){
-      el = document.createElement('div'); el.id = 'authBanner'; el.setAttribute('role','alert');
-      const auto = TOKEN_PORTAL_URL ? '<button type="button" class="btn" id="authBannerAuto">🏢 회사 계정으로 자동 연결</button>' : '';
-      el.innerHTML = '<span class="auth-banner-text"><b>공유 서버와 연결되어 있지 않습니다.</b> 지금은 이 PC에만 저장되고 다른 사람에게 반영되지 않습니다. '
-        + (TOKEN_PORTAL_URL ? '아래 버튼을 눌러 회사 구글 계정으로 연결해 주세요.' : '관리자에게 받은 링크 또는 토큰을 등록해 주세요.') + '</span>'
-        + auto + '<button type="button" class="btn' + (auto ? ' btn-ghost' : '') + '" id="authBannerBtn">🔑 ' + (auto ? '링크·토큰 붙여넣기' : '토큰 연결하기') + '</button>';
-      document.body.appendChild(el);
-      el.querySelector('#authBannerBtn').addEventListener('click', openTokenConnectDialog);
-      const autoBtn = el.querySelector('#authBannerAuto');
-      if(autoBtn) autoBtn.addEventListener('click', ()=>{ location.href = TOKEN_PORTAL_URL; });
-    }
-    el.hidden = false;
-  } else if(el){
-    el.hidden = true;
-  }
+  renderSaveStatusTop();
+  if(on) maybeAutoLogin_();
 }
-// 입력값이 링크(…#token=값)면 값만 뽑고, 아니면 입력 자체를 토큰으로 본다. 서버에 실제로 확인해 본 뒤에만 저장한다.
-async function connectWithToken(raw){
-  const text = String(raw||'').trim();
-  const m = /token=([^&\s#]+)/.exec(text);
-  let token = m ? m[1] : text;
-  try{ token = decodeURIComponent(token); }catch(e){}
-  if(!token) return {ok:false, msg:'링크 또는 토큰을 붙여넣어 주세요.'};
-  try{
-    const u = new URL(boardSync.url); u.searchParams.set('action','boardRevision'); u.searchParams.set('token', token);
-    const res = await fetch(u.href, {redirect:'follow', signal:AbortSignal.timeout(15000)});
-    const data = await res.json();
-    if(data.ok!==true) return {ok:false, msg: data.code==='AUTH' ? '토큰이 올바르지 않습니다. 관리자에게 받은 값을 다시 확인해 주세요.' : (data.error||'연결에 실패했습니다.')};
-  }catch(e){ return {ok:false, msg:'서버에 연결하지 못했습니다. 네트워크를 확인해 주세요. ('+e.message+')'}; }
-  localStorage.setItem('ppe_board_api_token', token);
-  boardSync.token = token;
-  return {ok:true};
+function goToLoginPortal_(){
+  if(!TOKEN_PORTAL_URL) return;
+  try{ localStorage.setItem('ppe_login_redirect_at', String(Date.now())); }catch(e){}
+  location.href = TOKEN_PORTAL_URL;
 }
-function openTokenConnectDialog(){
-  if(document.getElementById('tokenDialog')) return;
-  const wrap = document.createElement('div'); wrap.id = 'tokenDialog'; wrap.className = 'token-dialog-backdrop';
-  wrap.innerHTML = `<div class="token-dialog" role="dialog" aria-modal="true" aria-label="공유 서버 연결">
-      <h3>🔑 공유 서버 연결</h3>
-      <p>관리자에게 받은 <b>링크 전체</b> 또는 <b>토큰</b>을 아래에 붙여넣고 [연결]을 누르세요.</p>
-      <input type="text" id="tokenDialogInput" placeholder="https://…#token=…  또는  토큰" autocomplete="off" spellcheck="false">
-      <div class="token-dialog-msg" id="tokenDialogMsg" aria-live="polite"></div>
-      <div class="token-dialog-actions"><button type="button" class="btn btn-ghost" id="tokenDialogCancel">닫기</button><button type="button" class="btn" id="tokenDialogOk">연결</button></div>
-    </div>`;
-  document.body.appendChild(wrap);
-  const input = wrap.querySelector('#tokenDialogInput'), msg = wrap.querySelector('#tokenDialogMsg'), ok = wrap.querySelector('#tokenDialogOk');
-  const close = ()=> wrap.remove();
-  const submit = async ()=>{
-    ok.disabled = true; msg.className = 'token-dialog-msg'; msg.textContent = '연결 확인 중…';
-    const r = await connectWithToken(input.value);
-    if(r.ok){
-      msg.className = 'token-dialog-msg ok'; msg.textContent = '연결되었습니다. 화면을 새로고침합니다…';
-      setTimeout(()=> location.reload(), 700);
-    } else {
-      msg.className = 'token-dialog-msg err'; msg.textContent = r.msg; ok.disabled = false;
-    }
-  };
-  ok.addEventListener('click', submit);
-  wrap.querySelector('#tokenDialogCancel').addEventListener('click', close);
-  wrap.addEventListener('mousedown', e=>{ if(e.target===wrap) close(); });
-  input.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing){ e.preventDefault(); submit(); } if(e.key==='Escape'){ e.stopPropagation(); close(); } });
-  setTimeout(()=> input.focus(), 0);
+// 페이지를 막 열었는데 로그인이 안 돼 있으면(새 PC·브라우저 초기화·토큰 교체) 다른 사이트처럼 곧바로 로그인
+// 페이지로 보낸다. 단, 이미 무언가 고치기 시작했거나 창이 열려 있으면 작업 중인 화면을 떠나지 않도록 버튼만
+// 보여 준다. 로그인 페이지에서 돌아왔는데도 실패하면 무한 반복하지 않도록 5분에 한 번만 자동 이동한다.
+function maybeAutoLogin_(){
+  if(!TOKEN_PORTAL_URL || boardSync.everConnected || boardSync.editVersion>0) return;
+  if(document.getElementById('overlay').classList.contains('open')) return;
+  let last = 0; try{ last = Number(localStorage.getItem('ppe_login_redirect_at')||0); }catch(e){}
+  if(Date.now()-last < 5*60*1000) return;
+  goToLoginPortal_();
 }
+function isBoardAdmin_(){ const u = (typeof currentUser==='function') ? currentUser() : null; return !!(u && u.isAdmin); }
 
 async function refreshBoardShared(){
   // 탭이 안 보이는 상태(document.hidden)에서도 폴링은 계속한다 — 그래야 담당자 지정/@멘션 알림이
@@ -1999,20 +1961,27 @@ window.addEventListener('beforeunload', e=>{
 
 function renderSyncSettings(){
   const body=document.getElementById('settingsBody');
+  const admin = isBoardAdmin_();
+  // 일반 사용자에게는 서버 주소·토큰을 보여주지 않는다(로그인은 오른쪽 위 [회사 계정으로 로그인]). 관리자만 고급 설정으로 확인·변경.
   body.innerHTML=`<div class="panel"><h3>Google Sheets 업무 공유</h3>
-    <p>모든 PC에서 같은 Apps Script 배포 주소와 같은 공유 토큰을 사용하세요.</p>
-    <p><b>${boardSync.connected?'공유 서버 연결됨':'공유 연결 끊김 — 자동 재연결 중(수정 내용은 이 PC에 보관 후 연결되면 자동 저장)'}</b>${boardSync.pending?` · 보낼 목록 ${boardSync.pending}건`:''}</p>
-    <p style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</p>
-    <label for="boardApiUrl">Apps Script 웹 앱 URL (/exec)</label>
-    <input id="boardApiUrl" type="url" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.url)}">
-    <label for="boardApiToken">공유 토큰 (관리자가 setAuthToken()으로 설정한 값)</label>
-    <input id="boardApiToken" type="text" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.token)}" placeholder="토큰을 설정하지 않았다면 비워두세요">
-    <button class="btn" id="boardConnect">주소·토큰 저장 및 연결 확인</button>
+    <p id="syncSettingsState">${syncSettingsStateHtml_()}</p>
+    ${TOKEN_PORTAL_URL?`<button class="btn" id="boardLoginAgain">🏢 회사 계정으로 다시 로그인</button>`:''}
     <button class="btn btn-ghost" id="boardExportLocal" style="margin-left:8px">현재 PC 업무 백업</button>
     <button class="btn btn-ghost" id="boardDiagnose" style="margin-left:8px">🩺 연결 진단</button>
-    <p class="dash-note">Code.gs를 교체한 뒤 새 버전으로 배포하고, 편집기에서 migrateToRowStorage()를 한 번 실행해 기존 데이터를 이전하세요. 연결 성공 후 페이지를 새로고침하면 공유 데이터를 불러옵니다.</p>
+    ${admin?`<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700">관리자 고급 설정 (서버 주소·토큰)</summary>
+    <label for="boardApiUrl" style="display:block;margin-top:10px">Apps Script 웹 앱 URL (/exec)</label>
+    <input id="boardApiUrl" type="url" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.url)}">
+    <label for="boardApiToken">공유 토큰 (setAuthToken()으로 설정한 값)</label>
+    <div style="display:flex;gap:8px;align-items:center;margin:8px 0"><input id="boardApiToken" type="password" autocomplete="off" style="flex:1;padding:9px" value="${escapeHtml(boardSync.token)}" placeholder="토큰을 설정하지 않았다면 비워두세요"><button type="button" class="btn btn-ghost" id="boardTokenReveal">보기</button></div>
+    <button class="btn" id="boardConnect">주소·토큰 저장 및 연결 확인</button>
+    <p class="dash-note">서버 주소를 바꾸거나 토큰을 교체할 때만 사용합니다. 일반 사용자는 오른쪽 위 [회사 계정으로 로그인]으로 연결됩니다.</p></details>`:''}
     <div id="boardConnectResult" style="margin-top:10px"></div></div>`;
-  document.getElementById('boardConnect').onclick=async()=>{
+  const againBtn=document.getElementById('boardLoginAgain');
+  if(againBtn) againBtn.onclick=goToLoginPortal_;
+  const revealBtn=document.getElementById('boardTokenReveal');
+  if(revealBtn) revealBtn.onclick=()=>{ const i=document.getElementById('boardApiToken'); const show=i.type==='password'; i.type=show?'text':'password'; revealBtn.textContent=show?'가리기':'보기'; };
+  const connectBtn=document.getElementById('boardConnect');
+  if(connectBtn) connectBtn.onclick=async()=>{
     const value=document.getElementById('boardApiUrl').value.trim();
     const tokenValue=document.getElementById('boardApiToken').value.trim();
     const oldUrl=boardSync.url, oldToken=boardSync.token;
@@ -2039,8 +2008,9 @@ function renderSyncSettings(){
       show();
     };
     lines.push('진단 중… (최대 1~2분)'); show();
-    const url=document.getElementById('boardApiUrl').value.trim(), token=document.getElementById('boardApiToken').value.trim();
-    lines.push('브라우저 온라인: '+(navigator.onLine?'예':'아니오')+' / 저장된 주소: '+(url?url.slice(0,48)+'…'+url.slice(-12):'(없음)')+' / 토큰: '+(token?'있음':'없음'));
+    const urlEl=document.getElementById('boardApiUrl'), tokenEl=document.getElementById('boardApiToken');
+    const url=(urlEl?urlEl.value:boardSync.url).trim(), token=(tokenEl?tokenEl.value:boardSync.token).trim();
+    lines.push('브라우저 온라인: '+(navigator.onLine?'예':'아니오')+' / 저장된 주소: '+(url?url.slice(0,48)+'…'+url.slice(-12):'(없음)')+' / 로그인(토큰): '+(token?'있음':'없음'));
     await probe('1) script.google.com 접속', 'https://script.google.com/favicon.ico', 15000);
     await probe('2) script.googleusercontent.com 접속(응답 전달 주소)', 'https://script.googleusercontent.com/favicon.ico', 15000);
     await probe('3) www.google.com 접속(일반 구글 통신 비교용)', 'https://www.google.com/favicon.ico', 15000);
