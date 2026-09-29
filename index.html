@@ -954,11 +954,73 @@ const boardSync={
   taskServerSnapshot:new Map(),
   // 이번 세션에서 마지막으로 로컬에 반영된 TASKS의 id->JSON 스냅샷 (변경분 diff용)
   lastKnownTasksJson:new Map(),
-  outboxTaskIds:new Set(),      // 저장 대기 중인 카드 id
-  outboxDeleteIds:new Set(),    // 삭제 대기 중인 카드 id
+  // "보낼 목록" — 서버가 저장 완료라고 답하기 전까지 절대 지우지 않고 이 PC(localStorage)에 계속 보관한다.
+  // 연결이 끊겨 있어도, 브라우저를 껐다 켜도 남아 있다가 연결되는 즉시 올라간다.
+  // id -> {base: 이 수정을 시작할 때의 서버 값(없으면 null), baseUpdatedAt}
+  pendingTasks:new Map(),
+  pendingDeletes:new Set(),
   outboxActivity:[],            // 저장 대기 중인 활동 로그 항목(순서 보장을 위해 배열)
   outboxConfig:null,            // {users, models, checklists} 중 바뀐 것만 채워짐, 없으면 null
+  taskRetry:new Map(),          // id -> {msg, nextAt, delay} 서버가 거절한 카드는 그 카드만 따로 재시도
+  connected:false, everConnected:false, connecting:false,
+  reconnectTimer:null, reconnectDelay:1000, pushEpoch:0,
 };
+const BOARD_PENDING_KEY = 'ppe_board_pending_v2';
+const BOARD_BASELINES_KEY = 'ppe_board_task_baselines_v2';
+const BOARD_FAILLOG_KEY = 'ppe_board_sync_failures';
+function pendingCount_(){
+  return boardSync.pendingTasks.size + boardSync.pendingDeletes.size + boardSync.outboxActivity.length + (boardSync.outboxConfig?1:0);
+}
+function savePendingStore_(){
+  try{
+    localStorage.setItem(BOARD_PENDING_KEY, JSON.stringify({
+      tasks:Object.fromEntries(boardSync.pendingTasks), deletes:[...boardSync.pendingDeletes],
+      activity:boardSync.outboxActivity, config:boardSync.outboxConfig,
+    }));
+  }catch(e){ console.error('보낼 목록 저장 실패', e); }
+  boardSync.pending = pendingCount_();
+}
+function loadPendingStore_(){
+  try{
+    const raw = localStorage.getItem(BOARD_PENDING_KEY);
+    if(!raw) return;
+    const p = JSON.parse(raw);
+    boardSync.pendingTasks = new Map(Object.entries(p.tasks||{}));
+    boardSync.pendingDeletes = new Set(p.deletes||[]);
+    boardSync.outboxActivity = Array.isArray(p.activity) ? p.activity : [];
+    boardSync.outboxConfig = p.config || null;
+  }catch(e){ console.error('보낼 목록 읽기 실패', e); }
+  boardSync.pending = pendingCount_();
+}
+function saveBaselines_(){
+  try{
+    const out = {};
+    boardSync.taskServerSnapshot.forEach((s,id)=>{ out[id] = {s, at: boardSync.taskUpdatedAt.get(id) ?? null}; });
+    localStorage.setItem(BOARD_BASELINES_KEY, JSON.stringify(out));
+  }catch(e){}
+}
+function loadBaselines_(){
+  try{
+    const raw = localStorage.getItem(BOARD_BASELINES_KEY);
+    if(raw){
+      Object.entries(JSON.parse(raw)).forEach(([id,v])=>{
+        boardSync.taskServerSnapshot.set(id, v.s);
+        if(v.at!=null) boardSync.taskUpdatedAt.set(id, v.at);
+      });
+      return;
+    }
+    const old = localStorage.getItem('ppe_board_task_baselines'); // 예전 형식(updatedAt 없음)
+    if(old) Object.entries(JSON.parse(old)).forEach(([id,s])=> boardSync.taskServerSnapshot.set(id, s));
+  }catch(e){}
+}
+// 왜 끊겼는지 나중에 확인할 수 있도록 실패 기록을 최근 100건까지 남긴다(설정 > 🩺 연결 진단에서 보임).
+function logSyncFailure_(action, err, ms){
+  try{
+    const arr = JSON.parse(localStorage.getItem(BOARD_FAILLOG_KEY)||'[]');
+    arr.unshift({t:Date.now(), action, ms:Math.round(ms||0), msg:String((err&&err.message)||err).slice(0,200)});
+    localStorage.setItem(BOARD_FAILLOG_KEY, JSON.stringify(arr.slice(0,100)));
+  }catch(e){}
+}
 
 function boardLocalKey(key,shared){ return 'ppe_board_'+(shared?'data:':'device:')+key; }
 
@@ -975,26 +1037,30 @@ async function boardRequest(action, body, query={}){
     Object.entries(query).forEach(([k,v])=>u.searchParams.set(k,v));
   }
   // 느린 망에서도 견디도록 대기 60초. 조회(GET)는 멱등이라 시간 초과·통신 실패 시 한 번 더 시도한다(저장 POST는 중복 방지를 위해 재시도 안 함).
-  let res;
+  // 실패 종류를 구분해 던진다: network(응답 자체를 못 받음 → 연결 끊김으로 보고 재연결), auth(토큰), 그 외(서버가 요청을 거절 — 해당 건만 재시도).
+  const t0=performance.now();
+  const fail=(msg, kind)=>{ const e=Error(msg); e.network=kind==='network'; e.auth=kind==='auth'; logSyncFailure_(action, e, performance.now()-t0); return e; };
+  let res, data;
   for(let attempt=0; ; attempt++){
     try{ res=await fetch(u.href, {...options, signal:AbortSignal.timeout(60000)}); break; }
     catch(netErr){
       if(!body && attempt===0) continue;
-      throw Error('공유 서버에서 응답이 없습니다. 이 PC의 네트워크(VPN·프록시·보안 프로그램)가 구글 스크립트 주소(script.google.com, script.googleusercontent.com)를 막거나 매우 느릴 수 있습니다. ('+netErr.message+')');
+      throw fail('공유 서버에서 응답이 없습니다. 이 PC의 네트워크(VPN·프록시·보안 프로그램)가 구글 스크립트 주소(script.google.com, script.googleusercontent.com)를 막거나 매우 느릴 수 있습니다. ('+netErr.message+')', 'network');
     }
   }
-  if(!res.ok) throw Error('공유 서버 응답 오류 '+res.status);
-  const data=await res.json();
+  if(!res.ok) throw fail('공유 서버 응답 오류 '+res.status, 'network');
+  try{ data=await res.json(); }
+  catch(e){ throw fail('공유 서버가 올바르지 않은 응답을 보냈습니다(구글 서버 일시 오류 가능). ('+e.message+')', 'network'); }
   if(data.ok!==true){
     if(data.code==='AUTH'){
       setBoardAuthBanner(true); // 어떤 요청이든 인증에 실패하면 "연결 끊김" 안내와 연결 버튼을 띄운다
-      throw Error(/^AUTH:/.test(data.error||'') ? data.error : 'AUTH:'+(data.error||'토큰이 올바르지 않습니다.'));
+      throw fail(/^AUTH:/.test(data.error||'') ? data.error : 'AUTH:'+(data.error||'토큰이 올바르지 않습니다.'), 'auth');
     }
     // CONFLICT는 오류가 아니라 "다른 사람이 먼저 저장했다"는 정상 응답이라 호출한 쪽(pushOneTask)이
     // serverTask를 받아 병합 처리해야 한다 — 여기서 그냥 던져버리면 그 병합 로직이 실행되지 않고
     // "업무 공유 API가 없습니다"라는 엉뚱한 오류만 반복돼 저장이 계속 실패한 것처럼 보인다.
     if(data.code==='CONFLICT') return data;
-    throw Error(data.error||'업무 공유 API가 없습니다. Code.gs를 교체하고 새 버전으로 배포해 주세요.');
+    throw fail(data.error||'업무 공유 API가 없습니다. Code.gs를 교체하고 새 버전으로 배포해 주세요.', 'server');
   }
   if(boardSync.authBannerOn) setBoardAuthBanner(false); // 요청이 성공하면 연결된 것 — 안내 숨김
   return data;
@@ -1010,8 +1076,17 @@ function diffAndQueueTasks(newTasksArray){
     const text = JSON.stringify(task);
     if(boardSync.lastKnownTasksJson.get(task.id)===text) continue; // 변화 없음
     boardSync.lastKnownTasksJson.set(task.id, text);
-    boardSync.outboxDeleteIds.delete(task.id);
-    boardSync.outboxTaskIds.add(task.id);
+    boardSync.pendingDeletes.delete(task.id);
+    if(!boardSync.pendingTasks.has(task.id)){
+      // 이 수정이 "어느 서버 값 위에서" 시작됐는지 함께 기록한다 — 나중에 올릴 때 그 사이 다른 사람이
+      // 바꾼 항목과 내가 바꾼 항목을 구분해 합치는 기준이 된다. 서버 값을 모르면 'unknown'을 보내
+      // 서버가 항상 충돌 확인 절차를 거치게 한다(모르는 채로 통째로 덮어쓰지 않도록).
+      const base = boardSync.taskServerSnapshot.get(task.id);
+      boardSync.pendingTasks.set(task.id, {
+        base: base ? JSON.parse(JSON.stringify(base)) : null,
+        baseUpdatedAt: boardSync.taskUpdatedAt.get(task.id) ?? 'unknown',
+      });
+    }
   }
   // 이전엔 있었는데 이번엔 없는 id = 삭제된 카드
   const missingIds = [...boardSync.lastKnownTasksJson.keys()].filter(id=>!seen.has(id));
@@ -1032,14 +1107,14 @@ function diffAndQueueTasks(newTasksArray){
   }
   for(const id of missingIds){
     boardSync.lastKnownTasksJson.delete(id);
-    boardSync.outboxTaskIds.delete(id);
-    boardSync.outboxDeleteIds.add(id);
+    const wasNew = boardSync.pendingTasks.has(id) && !boardSync.taskServerSnapshot.has(id);
+    boardSync.pendingTasks.delete(id);
+    if(!wasNew) boardSync.pendingDeletes.add(id); // 서버에 올라간 적 없는 새 카드는 지울 것도 없음
   }
 }
 
 function queueBoardSave(name, text){
   boardSync.editVersion++;
-  localStorage.setItem('ppe_board_unsent:'+name, text);
   if(name==='tasks'){
     diffAndQueueTasks(JSON.parse(text));
   } else if(name==='activity'){
@@ -1050,8 +1125,7 @@ function queueBoardSave(name, text){
     boardSync.outboxConfig = boardSync.outboxConfig || {};
     boardSync.outboxConfig[name] = JSON.parse(text);
   }
-  boardSync.pending = boardSync.outboxTaskIds.size + boardSync.outboxDeleteIds.size
-    + boardSync.outboxActivity.length + (boardSync.outboxConfig?1:0) + (boardSync.sending?1:0);
+  savePendingStore_();
   clearTimeout(boardSync.timer);
   boardSync.timer=setTimeout(flushBoardSaves, 300);
   boardSyncStatus();
@@ -1063,7 +1137,8 @@ window.storage={mode:'local',
     const text=String(value);
     localStorage.setItem(boardLocalKey(key,shared), text);
     const name = shared && (/^ppe_tasks_/.test(key)?'tasks':{ppe_activity_log:'activity',ppe_models_v1:'models',ppe_users_v1:'users',ppe_checklists_v1:'checklists'}[key]);
-    if(name && !boardSync.booting && (this.mode==='google'||boardSync.loading)) queueBoardSave(name, text);
+    // 연결 상태와 관계없이 모든 수정은 "보낼 목록"에 들어간다(끊겨 있을 때 쓴 내용도 연결되면 올라가도록).
+    if(name && !boardSync.booting) queueBoardSave(name, text);
     return {key, value:text};
   },
   async delete(key,shared){ if(shared) throw Error('공유 저장소 전체 삭제는 지원하지 않습니다.'); localStorage.removeItem(boardLocalKey(key,shared)); }
@@ -1078,115 +1153,177 @@ function diffTaskFields_(a, b){
 }
 const CONFLICT_FIELD_LABELS_ = {title:'제목',type:'유형',model:'MODEL',status:'상태',assignee:'담당자',dueRequest:'완료요청일',receivedDate:'수신일',endDate:'완료일',note:'비고',ecnStep:'ECN STEP 1',actionItems:'체크 항목',materialLists:'신규자재 목록'};
 
-// 카드 하나를 서버에 반영. 충돌(CONFLICT)이면 "이 세션이 실제로 건드린 항목"과 "서버에서 바뀐 항목"을
-// 비교해, 서로 다른 항목을 고쳤을 뿐이면 묻지 않고 자동으로 합친다(예: 나는 담당자만 바꿨는데 동료가
-// 그사이 비고를 채웠다면, 내 담당자 변경 + 동료의 비고를 함께 반영 — 예전엔 카드 전체를 내 로컬 값으로
-// 덮어써서 동료의 비고가 사라지는 사고가 있었다). 같은 항목을 둘 다 고쳤을 때만 사용자에게 묻는다.
+// 카드 하나를 서버에 반영. 충돌(CONFLICT)이면 "이 수정을 시작할 때의 서버 값(base)" 기준으로 내가 바꾼
+// 항목과 서버에서 바뀐 항목을 비교해, 서로 다른 항목이면 묻지 않고 자동으로 합친다(예: 나는 담당자만
+// 바꿨는데 동료가 그사이 비고를 채웠다면 둘 다 반영). 같은 항목을 둘 다 서로 다른 값으로 고쳤을 때만 묻는다.
+// 응답을 못 받아 재시도했더니 사실 첫 요청이 저장돼 있던 경우(서버 값 = 내 값)는 충돌로 보지 않는다.
 async function pushOneTask(id){
+  const entry = boardSync.pendingTasks.get(id);
   const task = TASKS.find(t=>t.id===id);
-  if(!task){ boardSync.outboxTaskIds.delete(id); return; }
-  const baseUpdatedAt = boardSync.taskUpdatedAt.get(id) || null;
-  try{
-    const r = await boardRequest('boardUpsertTask', {task, userName:currentUserLabel(), baseUpdatedAt});
-    if(r.code==='CONFLICT'){
-      const server = r.serverTask;
-      const baseline = boardSync.taskServerSnapshot.get(id) || {};
-      const localChangedKeys = diffTaskFields_(baseline, task);
-      const remoteChangedKeys = diffTaskFields_(baseline, server);
-      const conflictKeys = localChangedKeys.filter(k=>remoteChangedKeys.includes(k));
-      const merged = {...server};
-      localChangedKeys.forEach(k=>{ if(!conflictKeys.includes(k)) merged[k]=task[k]; });
-      if(conflictKeys.length){
-        const names = conflictKeys.map(k=>CONFLICT_FIELD_LABELS_[k]||k).join(', ');
-        const overwrite = confirm(
-          `"${task.title||id}" 카드의 [${names}] 항목을 다른 사람도 같이 고쳤습니다. 그 외 항목은 자동으로 합쳐졌습니다.\n\n`+
-          `[확인] = 이 항목은 내가 고친 내용으로 저장\n[취소] = 이 항목은 다른 사람이 저장한 내용을 유지`
-        );
-        conflictKeys.forEach(k=>{ merged[k] = overwrite ? task[k] : server[k]; });
-      }
-      merged.id = task.id;
-      Object.keys(task).forEach(k=>{ if(!(k in merged)) delete task[k]; }); // 병합 결과에 없는 옛 항목 정리
-      Object.assign(task, merged); // 참조를 유지한 채(상세 화면이 열려 있어도 안전) 내용만 갱신
-      const r2 = await boardRequest('boardUpsertTask', {task, userName:currentUserLabel(), force:true});
-      boardSync.taskUpdatedAt.set(id, r2.updatedAt);
-      boardSync.taskServerSnapshot.set(id, JSON.parse(JSON.stringify(task)));
-      boardSync.lastKnownTasksJson.set(id, JSON.stringify(task));
-      renderCurrent();
-    } else {
-      boardSync.taskUpdatedAt.set(id, r.updatedAt);
-      boardSync.taskServerSnapshot.set(id, JSON.parse(JSON.stringify(task)));
+  if(!entry){ return; }
+  if(!task){ boardSync.pendingTasks.delete(id); return; }
+  let sentText = JSON.stringify(task); // 실제로 서버에 보낸 내용(보내는 도중 또 고쳐도 구분할 수 있게)
+  let r = await boardRequest('boardUpsertTask', {task:JSON.parse(sentText), userName:currentUserLabel(), baseUpdatedAt: entry.baseUpdatedAt ?? 'unknown'});
+  if(r.code==='CONFLICT'){
+    const server = {...r.serverTask}; delete server._updatedAt; delete server._updatedBy;
+    const baseline = entry.base || {};
+    const localChangedKeys = diffTaskFields_(baseline, task);
+    const remoteChangedKeys = diffTaskFields_(baseline, server);
+    const conflictKeys = localChangedKeys.filter(k=>remoteChangedKeys.includes(k) && JSON.stringify(server[k])!==JSON.stringify(task[k]));
+    const merged = {...server};
+    localChangedKeys.forEach(k=>{ if(!conflictKeys.includes(k)){ if(k in task) merged[k]=task[k]; else delete merged[k]; } });
+    if(conflictKeys.length){
+      const names = conflictKeys.map(k=>CONFLICT_FIELD_LABELS_[k]||k).join(', ');
+      const overwrite = confirm(
+        `"${task.title||id}" 카드의 [${names}] 항목을 다른 사람도 같이 고쳤습니다. 그 외 항목은 자동으로 합쳐졌습니다.\n\n`+
+        `[확인] = 이 항목은 내가 고친 내용으로 저장\n[취소] = 이 항목은 다른 사람이 저장한 내용을 유지`
+      );
+      conflictKeys.forEach(k=>{ merged[k] = overwrite ? task[k] : server[k]; });
     }
-    boardSync.outboxTaskIds.delete(id);
-  }catch(e){
-    // 실패한 카드는 큐에 남겨두고 다음 flush에서 재시도. localStorage에는 이미 저장되어 있으므로 데이터 유실은 없음.
-    throw e;
+    merged.id = task.id;
+    const live = TASKS.find(t=>t.id===id) || task;
+    Object.keys(live).forEach(k=>{ if(!(k in merged)) delete live[k]; }); // 병합 결과에 없는 옛 항목 정리
+    Object.assign(live, merged); // 참조를 유지한 채(상세 화면이 열려 있어도 안전) 내용만 갱신
+    boardSync.lastKnownTasksJson.set(id, JSON.stringify(live));
+    try{ localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS)); }catch(e){}
+    renderCurrent();
+    sentText = JSON.stringify(live);
+    r = await boardRequest('boardUpsertTask', {task:JSON.parse(sentText), userName:currentUserLabel(), force:true});
+  }
+  const saved = JSON.parse(sentText);
+  boardSync.taskUpdatedAt.set(id, r.updatedAt);
+  boardSync.taskServerSnapshot.set(id, saved);
+  boardSync.pushEpoch++;
+  boardSync.taskRetry.delete(id);
+  const current = TASKS.find(t=>t.id===id);
+  if(current && JSON.stringify(current)!==sentText){
+    // 올리는 도중에 또 고쳤다 — 방금 저장된 값을 새 기준으로 삼아 목록에 남겨두고 다음 차례에 올린다.
+    boardSync.pendingTasks.set(id, {base:saved, baseUpdatedAt:r.updatedAt});
+  } else {
+    boardSync.pendingTasks.delete(id);
   }
 }
 
+// 서버가 특정 카드만 거절한 경우(예: 카드가 너무 큼, 서버 잠금 대기 초과) 그 카드만 점점 간격을 늘려
+// 재시도한다 — 예전엔 카드 한 장 실패로 전체가 "저장 실패" 상태에 빠져 다른 사람 수정도 받아오지 못했다.
+function markTaskRetry_(id, e){
+  const prev = boardSync.taskRetry.get(id);
+  const delay = Math.min(prev ? prev.delay*2 : 2000, 60000);
+  boardSync.taskRetry.set(id, {msg:e.message, delay, nextAt:Date.now()+delay});
+}
+
 async function flushBoardSaves(){
-  if(boardSync.sending || boardSync.loading || window.storage.mode!=='google') return;
-  if(!boardSync.outboxTaskIds.size && !boardSync.outboxDeleteIds.size && !boardSync.outboxActivity.length && !boardSync.outboxConfig) return;
+  if(boardSync.sending || !boardSync.connected) return;
+  const now = Date.now();
+  const taskIds=[...boardSync.pendingTasks.keys()].filter(id=>{ const r=boardSync.taskRetry.get(id); return !r || r.nextAt<=now; });
+  const deleteIds=[...boardSync.pendingDeletes];
+  const hasActivity = boardSync.outboxActivity.length>0;
+  const configBatch = boardSync.outboxConfig;
+  if(!taskIds.length && !deleteIds.length && !hasActivity && !configBatch){ scheduleFlushForRetries_(); return; }
   boardSync.sending=true;
-  let hadError=false;
+  let networkError=null;
 
-  const taskIds=[...boardSync.outboxTaskIds];
-  const deleteIds=[...boardSync.outboxDeleteIds];
-  const activityBatch=boardSync.outboxActivity.splice(0, boardSync.outboxActivity.length);
-  const configBatch=boardSync.outboxConfig; boardSync.outboxConfig=null;
-
-  // 한꺼번에 수십~수백 건이 대기열에 쌓여도(대량 가져오기, 복구 등) 전부 동시에 쏘지 않고
-  // CONCURRENCY개씩 나눠 보낸다 — 서버(Apps Script)에 순간적으로 요청이 몰려 "Failed to fetch"가
-  // 나는 것을 막기 위함.
-  const CONCURRENCY = 6;
+  // 서버는 시트가 꼬이지 않게 한 번에 한 요청씩만 쓰므로(잠금), 한꺼번에 많이 보내면 뒤 요청들이 잠금을
+  // 기다리다 시간 초과로 실패한다 — 동시에 2건씩만 보낸다.
+  const CONCURRENCY = 2;
   async function runLimited(items, worker){
     let i = 0;
     async function runNext(){
-      if(i >= items.length) return;
+      if(i >= items.length || networkError) return;
       const item = items[i++];
       await worker(item);
       await runNext();
     }
     await Promise.all(Array.from({length: Math.min(CONCURRENCY, items.length)}, runNext));
   }
+  const handle = (id, e)=>{
+    if(e.network || e.auth) networkError = networkError || e;
+    else if(id) markTaskRetry_(id, e);
+    else boardSync.error = e.message;
+  };
 
   await runLimited(taskIds, async id=>{
-    try{ await pushOneTask(id); }
-    catch(e){ hadError=true; boardSync.error=e.message; }
+    try{ await pushOneTask(id); } catch(e){ handle(id, e); }
+    savePendingStore_();
   });
   await runLimited(deleteIds, async id=>{
-    try{ await boardRequest('boardDeleteTask', {id, userName:currentUserLabel()}); boardSync.outboxDeleteIds.delete(id); }
-    catch(e){ hadError=true; boardSync.error=e.message; }
+    try{
+      await boardRequest('boardDeleteTask', {id, userName:currentUserLabel()});
+      boardSync.pendingDeletes.delete(id);
+      boardSync.taskServerSnapshot.delete(id); boardSync.taskUpdatedAt.delete(id);
+      boardSync.pushEpoch++;
+    } catch(e){ handle(null, e); }
+    savePendingStore_();
   });
-  for(const entry of activityBatch){
-    try{ await boardRequest('boardAppendActivity', {entry}); }
-    catch(e){ hadError=true; boardSync.error=e.message; boardSync.outboxActivity.push(entry); }
+  while(!networkError && boardSync.outboxActivity.length){
+    try{ await boardRequest('boardAppendActivity', {entry:boardSync.outboxActivity[0]}); boardSync.outboxActivity.shift(); }
+    catch(e){ handle(null, e); break; }
+    savePendingStore_();
   }
-  if(configBatch){
-    try{ await boardRequest('boardSaveConfig', configBatch); }
-    catch(e){ hadError=true; boardSync.error=e.message; boardSync.outboxConfig={...(boardSync.outboxConfig||{}), ...configBatch}; }
+  if(!networkError && boardSync.outboxConfig){
+    const batch = boardSync.outboxConfig;
+    try{
+      await boardRequest('boardSaveConfig', batch);
+      if(boardSync.outboxConfig===batch) boardSync.outboxConfig=null; // 보내는 사이 또 바뀌었으면 남겨둠
+    } catch(e){ handle(null, e); }
+    savePendingStore_();
   }
 
   boardSync.sending=false;
-  boardSync.pending = boardSync.outboxTaskIds.size + boardSync.outboxDeleteIds.size + boardSync.outboxActivity.length + (boardSync.outboxConfig?1:0);
-  boardSync.dirty = hadError;
-  if(!hadError) boardSync.error='';
-  if(!boardSync.pending && !hadError){
-    // 전부 서버로 보내는 데 성공했으면, 다음 접속 때 불필요하게 재전송하지 않도록 백업 지움.
-    ['tasks','activity','users','models','checklists'].forEach(name=> localStorage.removeItem('ppe_board_unsent:'+name));
-    boardSync.lastSavedAt = Date.now();
-  }
+  saveBaselines_();
+  savePendingStore_();
+  boardSync.dirty = boardSync.taskRetry.size>0;
+  if(!boardSync.pending) boardSync.lastSavedAt = Date.now();
+  if(networkError) markDisconnected_(networkError);
+  else if(!boardSync.dirty) boardSync.error='';
   boardSyncStatus();
-  if(boardSync.pending) boardSync.timer=setTimeout(flushBoardSaves, hadError?4000:300);
+  if(boardSync.connected){
+    const ready = [...boardSync.pendingTasks.keys()].some(id=>!boardSync.taskRetry.has(id))
+      || boardSync.pendingDeletes.size || boardSync.outboxActivity.length || boardSync.outboxConfig;
+    if(ready){ clearTimeout(boardSync.timer); boardSync.timer=setTimeout(flushBoardSaves, 300); }
+    else scheduleFlushForRetries_();
+  }
+}
+function scheduleFlushForRetries_(){
+  if(!boardSync.taskRetry.size || !boardSync.connected) return;
+  const next = Math.min(...[...boardSync.taskRetry.values()].map(r=>r.nextAt));
+  clearTimeout(boardSync.timer);
+  boardSync.timer = setTimeout(flushBoardSaves, Math.max(300, next-Date.now()));
+}
+
+// ---- 연결 유지 ----
+// 요청 한 번 실패는 흔한 일(구글 서버 일시 지연 등)이므로, 실패하면 1초→2초→…→최대 5초 간격으로
+// 절대 포기하지 않고 다시 연결한다. 동시에 여러 번 시도해 서버를 더 바쁘게 만들지 않도록 한 번에 하나씩만.
+// 토큰 문제(AUTH)는 재시도로 해결되지 않으므로 30초 간격으로 확인만 계속한다.
+function markDisconnected_(err){
+  boardSync.connected = false;
+  boardSync.error = err ? err.message : boardSync.error;
+  if(err && err.auth) notifyBoardAuthError(err.message);
+  scheduleReconnect_(err && err.auth ? 30000 : null);
+  boardSyncStatus();
+}
+function scheduleReconnect_(forceDelay){
+  if(boardSync.reconnectTimer || boardSync.connecting || boardSync.connected) return;
+  const d = forceDelay || boardSync.reconnectDelay;
+  boardSync.nextReconnectAt = Date.now()+d;
+  boardSync.reconnectTimer = setTimeout(()=>{ boardSync.reconnectTimer=null; connectBoardShared(); }, d);
+  if(!forceDelay) boardSync.reconnectDelay = Math.min(boardSync.reconnectDelay+1000, 5000);
+}
+function reconnectNow_(){
+  if(boardSync.connected || boardSync.connecting || boardSync.booting) return;
+  clearTimeout(boardSync.reconnectTimer); boardSync.reconnectTimer=null;
+  connectBoardShared();
 }
 
 function boardSyncStatus(){
+  boardSync.pending = pendingCount_();
   const el=document.getElementById('syncText');
   if(el){
-    el.textContent = boardSync.dirty ? '공유 저장 실패 · PC 백업 보존'
-      : boardSync.loading ? 'PC 데이터 표시 중 · 공유 연결 확인 중'
+    el.textContent = !boardSync.connected
+        ? (boardSync.everConnected || !boardSync.loading ? `공유 연결 끊김 · 재연결 중 · 보낼 목록 ${boardSync.pending}건 이 PC에 보관` : 'PC 데이터 표시 중 · 공유 연결 확인 중')
+      : boardSync.dirty ? `일부 카드 저장 재시도 중 (${boardSync.taskRetry.size}건)`
       : boardSync.pending ? '이 PC에 저장됨 · 공유 저장 중'
-      : window.storage.mode==='google' ? (boardSync.error?'공유 서버 연결 확인 필요':'Google Sheets 공유 연결됨')
-      : '이 PC에 저장됨 · 공유 미연결';
+      : (boardSync.error?'공유 서버 연결 확인 필요':'Google Sheets 공유 연결됨');
     el.title=boardSync.error||'';
   }
   renderSaveStatusTop();
@@ -1205,26 +1342,29 @@ function renderSaveStatusTop(){
   const txt = document.getElementById('saveStatusTopText');
   if(!wrap || !txt) return;
   wrap.classList.remove('pending','error');
-  if(boardSync.dirty){
+  const pendingNames = ()=>[...boardSync.pendingTasks.keys()].map(id=>{ const t=TASKS.find(x=>x.id===id); return t ? (t.title||id) : id; });
+  if(!boardSync.connected && (boardSync.everConnected || !boardSync.loading)){
     wrap.classList.add('error');
-    txt.textContent = '저장 실패 · 이 PC엔 보존됨';
-    wrap.title = boardSync.error || '';
-  } else if(boardSync.loading){
-    txt.textContent = '연결 확인 중…';
+    txt.textContent = `공유 연결 끊김 · 자동 재연결 중` + (boardSync.pending ? ` · 보낼 목록 ${boardSync.pending}건 이 PC에 안전하게 보관 중(연결되면 자동 저장)` : '');
+    wrap.title = (boardSync.error||'') + (boardSync.pending ? '\n\n' + pendingNames().join('\n') : '');
+  } else if(!boardSync.connected){
+    txt.textContent = '연결 확인 중…' + (boardSync.pending ? ` (보낼 목록 ${boardSync.pending}건)` : '');
     wrap.title = '';
+  } else if(boardSync.dirty){
+    wrap.classList.add('error');
+    const failed = [...boardSync.taskRetry.entries()].map(([id,r])=>{ const t=TASKS.find(x=>x.id===id); return (t?(t.title||id):id)+' — '+r.msg; });
+    txt.textContent = `카드 ${boardSync.taskRetry.size}건 저장 재시도 중 · 이 PC엔 보존됨`;
+    wrap.title = failed.join('\n');
   } else if(boardSync.pending){
     wrap.classList.add('pending');
-    const names = [...boardSync.outboxTaskIds].map(id=>{
-      const t = TASKS.find(x=>x.id===id);
-      return t ? (t.title||id) : id;
-    });
+    const names = pendingNames().filter(Boolean);
     txt.textContent = `저장 중… (${boardSync.pending}건 대기${names.length? ' — '+names.slice(0,3).join(', ')+(names.length>3?' 외':'') : ''})`;
     wrap.title = names.join('\n');
   } else if(boardSync.lastSavedAt){
     txt.textContent = `최근 저장됨 (${formatSavedAt(boardSync.lastSavedAt)})`;
     wrap.title = '';
   } else {
-    txt.textContent = window.storage.mode==='google' ? 'Google Sheets 공유 연결됨' : '이 PC에 저장됨';
+    txt.textContent = 'Google Sheets 공유 연결됨';
     wrap.title = '';
   }
 }
@@ -1235,116 +1375,158 @@ function serverTaskDropLooksSuspicious(serverTasks){
   return before >= 20 && serverTasks.length < before*0.7 && (before - serverTasks.length) >= 10;
 }
 
-// 서버의 최신 tasks 배열을 로컬 상태에 반영. 편집 중이면(입력 포커스 등) 건드리지 않습니다.
+// 지금 사람이 카드 내용을 입력하고 있는지 — 이때 화면 데이터를 갈아끼우면 입력 중인 내용이 날아가므로 반영을 미룬다.
+// 검색창·필터(.toolbar)는 업무 내용을 고치는 칸이 아니므로 제외한다(예전엔 검색창에 커서만 있어도 동료 수정이 안 들어왔다).
+function isEditingTaskData_(){
+  if(document.getElementById('overlay').classList.contains('open')) return true;
+  const a = document.activeElement;
+  if(!a || !(/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable)) return false;
+  return !a.closest('.toolbar');
+}
+function toolbarFocused_(){
+  const a = document.activeElement;
+  return !!(a && a.closest && a.closest('.toolbar') && /INPUT|TEXTAREA|SELECT/.test(a.tagName));
+}
+
+// 서버 목록을 화면에 반영. 아직 서버에 못 올린 내 수정(보낼 목록)이 있는 카드는, 서버 최신값 위에 내가
+// 실제로 바꾼 항목만 얹어서 보여준다 — 그래서 저장 대기 중이어도 다른 사람 수정은 계속 받아온다.
 function applyServerTasks(serverTasks){
   if(typeof checkNotifyDiff === 'function') checkNotifyDiff(serverTasks); // 편집 중이라 화면 반영을 건너뛰어도 알림 감지는 항상 한다
-  const editing=document.getElementById('overlay').classList.contains('open')||/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
-  if(editing) return false;
-  // 아직 서버로 못 보낸 로컬 변경(카드 저장 대기 중)이 있으면, 서버의(더 오래된) 데이터로
-  // 덮어써서 그 변경분을 조용히 잃어버리면 안 된다 — 다음 flush에서 먼저 내보내게 기다린다.
-  if(boardSync.pending) return false;
-  TASKS = serverTasks.map(t=>{
-    boardSync.taskUpdatedAt.set(t.id, t._updatedAt);
-    const clean={...t}; delete clean._updatedAt; delete clean._updatedBy;
-    boardSync.lastKnownTasksJson.set(t.id, JSON.stringify(clean));
-    boardSync.taskServerSnapshot.set(t.id, JSON.parse(JSON.stringify(clean)));
-    return clean;
-  });
+  if(isEditingTaskData_() || boardSync.sending) return false;
+  const localById = new Map(TASKS.map(t=>[t.id,t]));
+  const serverIds = new Set();
+  const next = [];
+  const known = new Map();
+  for(const st of serverTasks){
+    const id = st.id; serverIds.add(id);
+    const clean = {...st}; delete clean._updatedAt; delete clean._updatedBy;
+    boardSync.taskUpdatedAt.set(id, st._updatedAt);
+    boardSync.taskServerSnapshot.set(id, JSON.parse(JSON.stringify(clean)));
+    if(boardSync.pendingDeletes.has(id)) continue; // 내가 지웠는데 아직 서버에 못 보낸 카드
+    let t = clean;
+    const p = boardSync.pendingTasks.get(id);
+    const local = localById.get(id);
+    if(p && local){
+      const base = p.base || {};
+      const localKeys = diffTaskFields_(base, local);
+      const remoteKeys = diffTaskFields_(base, clean);
+      t = {...clean};
+      localKeys.forEach(k=>{ if(k in local) t[k]=local[k]; else delete t[k]; });
+      const conflict = localKeys.some(k=>remoteKeys.includes(k) && JSON.stringify(clean[k])!==JSON.stringify(local[k]));
+      if(!conflict){
+        // 같은 항목을 둘 다 고친 게 아니면 기준을 지금 서버값으로 옮긴다. 같은 항목 충돌이면 기준을 그대로 둬서,
+        // 올릴 때 어느 쪽을 남길지 사용자에게 묻게 한다.
+        if(!diffTaskFields_(clean, t).length) boardSync.pendingTasks.delete(id); // 서버에 이미 같은 값이 있음
+        else boardSync.pendingTasks.set(id, {base:JSON.parse(JSON.stringify(clean)), baseUpdatedAt:st._updatedAt});
+      }
+    }
+    next.push(t);
+    known.set(id, JSON.stringify(t));
+  }
+  // 서버에 없는 카드인데 보낼 목록에 있다 = 이 PC에서 새로 만들었거나, 다른 사람이 지운 카드를 내가 고치던 중.
+  // 어느 쪽이든 내가 쓴 내용을 잃지 않도록 남겨 두고 다시 올린다.
+  for(const [id] of boardSync.pendingTasks){
+    if(serverIds.has(id)) continue;
+    const local = localById.get(id);
+    if(local){ next.push(local); known.set(id, JSON.stringify(local)); }
+  }
+  [...boardSync.pendingDeletes].forEach(id=>{ if(!serverIds.has(id)) boardSync.pendingDeletes.delete(id); }); // 이미 지워짐
+  [...boardSync.taskServerSnapshot.keys()].forEach(id=>{ if(!serverIds.has(id)){ boardSync.taskServerSnapshot.delete(id); boardSync.taskUpdatedAt.delete(id); } });
+  TASKS = next;
+  boardSync.lastKnownTasksJson = known;
   localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS));
-  // 카드별로 "이 브라우저가 서버와 마지막으로 같았다고 확인한 값"을 남겨, 다음에 열었을 때
-  // recoverUnsentBoardSaves가 무엇을 실제로 고쳤었는지 가려낼 수 있게 한다.
-  try{ localStorage.setItem('ppe_board_task_baselines', JSON.stringify(Object.fromEntries(boardSync.taskServerSnapshot))); }catch(e){}
+  saveBaselines_();
+  savePendingStore_();
   return true;
 }
 
-// 지난 세션이 "서버로 못 보낸 변경"을 남긴 채 닫혔을 경우(예: beforeunload 경고를 무시하고
-// 닫음) 되살린다.
-// 주의: unsentTasks는 그 세션이 마지막으로 persist()한 TASKS 배열 "전체" 스냅샷이라, 이 브라우저가
-// 실제로 건드리지 않은 카드도 다 들어있다. 예전엔 그 카드가 지금의 서버 값과 조금이라도 다르면
-// (다른 사람이 그사이 수정했다는 뜻일 뿐인데도) 카드 전체를 그대로 다시 밀어써서, 예를 들어 USER2가
-// 담당자만 바꾼 낡은 스냅샷을 다시 보내면서 그사이 USER1이 채운 비고까지 통째로 지워버리는 사고가
-// 있었다. 이제는 prevBaselines(직전 세션이 "서버와 같다"고 알고 있던 값)와 비교해 이 세션이 실제로
-// 바꾼 항목만 가려내, 지금 막 받아온 서버 최신값 위에 그 항목만 얹는다.
-function recoverUnsentBoardSaves(prevBaselines){
+// 예전 버전이 남긴 "못 보낸 변경" 백업(카드 전체 스냅샷 방식)을 새 보낼 목록으로 옮긴다 — 이 업데이트가
+// 적용되는 순간 대기 중이던 수정도 잃지 않도록. 실제로 바뀐 항목만 옮긴다.
+function migrateLegacyUnsent_(){
   try{
-    const unsentTasks = localStorage.getItem('ppe_board_unsent:tasks');
-    if(unsentTasks){
-      const localTasks = JSON.parse(unsentTasks);
-      let restored = 0;
-      localTasks.forEach(localTask=>{
-        if(!localTask || !localTask.id) return;
-        const baseline = (prevBaselines && prevBaselines.get(localTask.id)) || {};
-        const changedKeys = diffTaskFields_(baseline, localTask);
-        if(!changedKeys.length) return; // 이 세션이 실제로 건드리지 않은 카드 — 그대로 서버 최신값 유지
-        const idx = TASKS.findIndex(t=>t.id===localTask.id);
-        if(idx>=0){
-          changedKeys.forEach(k=>{ TASKS[idx][k]=localTask[k]; }); // 건드린 항목만 최신값 위에 덧씌움
-        } else {
-          TASKS.push(localTask); // 서버에 아직 없던(등록 도중 끊긴) 신규 카드는 통째로 복구
-        }
-        boardSync.outboxTaskIds.add(localTask.id);
-        boardSync.outboxDeleteIds.delete(localTask.id);
-        restored++;
+    const raw = localStorage.getItem('ppe_board_unsent:tasks');
+    if(raw){
+      const hasBaselines = boardSync.taskServerSnapshot.size > 0;
+      JSON.parse(raw).forEach(lt=>{
+        if(!lt || !lt.id || boardSync.pendingTasks.has(lt.id)) return;
+        const base = boardSync.taskServerSnapshot.get(lt.id);
+        if(!base && !hasBaselines) return; // 기준값이 전혀 없으면 무엇을 고쳤는지 알 수 없어 옮기지 않는다
+        const keys = diffTaskFields_(base||{}, lt);
+        if(!keys.length) return;
+        const cur = TASKS.find(t=>t.id===lt.id);
+        if(cur) keys.forEach(k=>{ if(k in lt) cur[k]=lt[k]; else delete cur[k]; });
+        else TASKS.push(lt);
+        boardSync.pendingTasks.set(lt.id, {base: base?JSON.parse(JSON.stringify(base)):null, baseUpdatedAt:'unknown'});
       });
-      if(restored){
-        console.log('이전 세션에서 서버로 못 보낸 카드 ' + restored + '건을 복구했습니다.');
-        localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS));
-      }
+      localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS));
     }
-    const unsentActivity = localStorage.getItem('ppe_board_unsent:activity');
-    if(unsentActivity){
-      const arr = JSON.parse(unsentActivity);
-      if(arr.length) boardSync.outboxActivity.push(arr[0]);
-    }
+    const act = localStorage.getItem('ppe_board_unsent:activity');
+    if(act){ const arr = JSON.parse(act); if(arr.length && !boardSync.outboxActivity.some(a=>a.ts===arr[0].ts)) boardSync.outboxActivity.push(arr[0]); }
     ['users','models','checklists'].forEach(name=>{
-      const raw = localStorage.getItem('ppe_board_unsent:'+name);
-      if(raw){
-        boardSync.outboxConfig = boardSync.outboxConfig || {};
-        boardSync.outboxConfig[name] = JSON.parse(raw);
-      }
+      const r = localStorage.getItem('ppe_board_unsent:'+name);
+      if(r){ boardSync.outboxConfig = boardSync.outboxConfig || {}; boardSync.outboxConfig[name] = JSON.parse(r); }
     });
-    boardSync.pending = boardSync.outboxTaskIds.size + boardSync.outboxDeleteIds.size
-      + boardSync.outboxActivity.length + (boardSync.outboxConfig?1:0);
-  }catch(e){ console.error('unsent 백업 복구 실패', e); }
+    ['tasks','activity','users','models','checklists'].forEach(n=>localStorage.removeItem('ppe_board_unsent:'+n));
+    if(localStorage.getItem('ppe_board_task_baselines')){ saveBaselines_(); localStorage.removeItem('ppe_board_task_baselines'); }
+    savePendingStore_();
+  }catch(e){ console.error('이전 백업 옮기기 실패', e); }
 }
 
 async function startBoardShared(){
+  loadBaselines_();
+  loadPendingStore_();
+  migrateLegacyUnsent_();
+  // 이 PC에 있던 화면 데이터를 "마지막으로 알던 상태"로 삼아, 이후 실제로 고친 카드만 보낼 목록에 넣는다.
+  // (예전엔 이 기준이 비어 있어서, 서버 연결 전에 카드 하나만 고쳐도 모든 카드를 이 PC의 예전 값으로
+  // 서버에 덮어써 그사이 다른 사람이 고친 내용이 되돌아갔다.)
+  boardSync.lastKnownTasksJson = new Map(TASKS.map(t=>[t.id, JSON.stringify(t)]));
   boardSync.booting=false;
   boardSyncStatus();
-  // applyServerTasks가 taskServerSnapshot(및 그 localStorage 백업)을 "지금 막 받아온 최신값"으로
-  // 덮어쓰기 전에, 지난 세션이 알고 있던 기준값을 먼저 읽어둔다(recoverUnsentBoardSaves가 "이 세션이
-  // 실제로 무엇을 바꿨는지" 가려내는 기준).
-  let prevBaselines = new Map();
-  try{
-    const raw = localStorage.getItem('ppe_board_task_baselines');
-    if(raw) prevBaselines = new Map(Object.entries(JSON.parse(raw)));
-  }catch(e){}
+  window.addEventListener('online', reconnectNow_);
+  await connectBoardShared();
+}
+
+async function connectBoardShared(){
+  if(boardSync.connecting || boardSync.connected) return;
+  boardSync.connecting = true;
+  boardSyncStatus();
+  let err = null;
   try{
     const [taskState, configState, activityState] = await Promise.all([
       boardRequest('boardGetTasks'),
       boardRequest('boardGetConfig'),
       boardRequest('boardGetActivity'),
     ]);
-    window.storage.mode='google';
-    // revision은 서버 목록을 "실제로 반영했을 때만" 기록한다. 반영이 스킵됐는데(입력 중, 저장 대기 중 등)
-    // revision만 최신으로 갱신하면 이후 폴링이 "바뀐 게 없다"고 판단해 화면이 예전 데이터로 계속 남는다.
-    if(applyServerTasks(taskState.tasks)) boardSync.revision=taskState.revision;
-    // 서버 스냅샷을 반영해서 비교 기준이 세워진 다음에 복구해야 안전하다(순서 중요).
-    recoverUnsentBoardSaves(prevBaselines);
-    USERS=configState.users; MODELS=configState.models; CHECKLISTS=configState.checklists;
-    ACTIVITY_LOG=activityState.activity;
+    if(!Array.isArray(taskState.tasks)){ const e = Error('서버 업무 응답 형식이 올바르지 않습니다.'); e.network = true; throw e; }
+    boardSync.connected = true; boardSync.everConnected = true;
+    window.storage.mode = 'google';
+    boardSync.reconnectDelay = 1000;
+    boardSync.error = '';
+    if(boardSync.authBannerOn) setBoardAuthBanner(false);
+    // revision은 서버 목록을 "실제로 반영했을 때만" 기록한다(반영을 미뤘으면 다음 확인 때 다시 받아 반영).
+    boardSync.revision = applyServerTasks(taskState.tasks) ? taskState.revision : null;
+    // 설정·활동 로그: 이 PC에서 바꾸고 아직 못 보낸 것은 내 값을 유지하고, 나머지는 서버 최신값으로.
+    const cfg = boardSync.outboxConfig || {};
+    if(!cfg.users) USERS = configState.users;
+    if(!cfg.models) MODELS = configState.models;
+    if(!cfg.checklists) CHECKLISTS = configState.checklists;
+    const serverActs = Array.isArray(activityState.activity) ? activityState.activity : [];
+    const unsentActs = boardSync.outboxActivity.filter(a=>!serverActs.some(s=>s.ts===a.ts)).slice().reverse();
+    ACTIVITY_LOG = [...unsentActs, ...serverActs];
     localStorage.setItem(boardLocalKey(USERS_KEY,true), JSON.stringify(USERS));
     localStorage.setItem(boardLocalKey(MODELS_KEY,true), JSON.stringify(MODELS));
     localStorage.setItem(boardLocalKey(CHECKLISTS_KEY,true), JSON.stringify(CHECKLISTS));
     localStorage.setItem(boardLocalKey(ACTIVITY_KEY,true), JSON.stringify(ACTIVITY_LOG));
-    boardSync.error='';
     renderUserSwitcher(); renderCurrent();
   }catch(e){
-    window.storage.mode='local'; boardSync.error=e.message;
-    notifyBoardAuthError(e.message);
+    err = e;
   } finally {
-    boardSync.loading=false; boardSyncStatus(); flushBoardSaves();
+    boardSync.connecting = false;
+    boardSync.loading = false;
   }
+  if(err){ markDisconnected_(err); return; }
+  boardSyncStatus();
+  flushBoardSaves();
 }
 
 // 서버가 토큰 인증(AUTH_TOKEN)을 요구하는데 이 브라우저에 토큰이 없거나 틀린 경우 — 화면엔 "연결 확인 필요"만
@@ -1432,14 +1614,21 @@ function openTokenConnectDialog(){
 async function refreshBoardShared(){
   // 탭이 안 보이는 상태(document.hidden)에서도 폴링은 계속한다 — 그래야 담당자 지정/@멘션 알림이
   // 백그라운드에 있을 때도 뜬다. 화면을 다시 그리는 무거운 작업만 보일 때로 미룬다.
-  if(window.storage.mode!=='google'||boardSync.loading||boardSync.fetching||boardSync.pending||boardSync.dirty) return;
+  // 저장 대기 중이어도 받아온다(내 미전송 수정은 applyServerTasks가 서버값 위에 얹어서 보존). 끊긴 상태의 재연결은 별도 루프 담당.
+  if(!boardSync.connected) return;
+  if(boardSync.needsRender && !toolbarFocused_() && !document.hidden){ boardSync.needsRender=false; renderCurrent(); }
+  if(boardSync.fetching||boardSync.sending) return;
   boardSync.fetching=true;
-  const requestedAtEditVersion=boardSync.editVersion;
+  const requestedAtEditVersion=boardSync.editVersion, requestedAtPushEpoch=boardSync.pushEpoch;
   try{
     const rev = await boardRequest('boardRevision');
-    if(rev.revision===boardSync.revision){ boardSync.error=''; return; }
+    if(rev.revision===boardSync.revision){ if(!boardSync.dirty) boardSync.error=''; return; }
     const taskState = await boardRequest('boardGetTasks');
-    if(boardSync.pending||boardSync.dirty||requestedAtEditVersion!==boardSync.editVersion) return;
+    // 받아오는 사이 내가 새로 저장했거나 수정했다면 이 응답은 이미 낡았을 수 있다(반영하면 방금 저장한 값이
+    // 잠깐 옛값으로 보인다) — 버리고 잠시 뒤 다시 받는다.
+    if(boardSync.sending || requestedAtPushEpoch!==boardSync.pushEpoch || requestedAtEditVersion!==boardSync.editVersion){
+      setTimeout(refreshBoardShared, 1500); return;
+    }
     // 방어: 서버 응답이 목록이 아니거나, 지금 화면의 업무 수에 비해 갑자기 크게 줄었으면(불완전 응답·일시
     // 오류 의심) 반영하지 않는다. 그대로 반영하면 사라진 것처럼 보이는 업무들이 다음 저장 때 서버에서
     // 삭제될 수 있다. revision도 갱신하지 않아 다음 폴링에서 다시 확인한다.
@@ -1454,25 +1643,37 @@ async function refreshBoardShared(){
     const applied = applyServerTasks(taskState.tasks);
     if(applied){
       boardSync.revision=taskState.revision;
-      if(!document.hidden){ renderUserSwitcher(); renderCurrent(); }
+      if(!document.hidden) renderAfterServerApply_();
     }
-    boardSync.error='';
+    if(!boardSync.dirty) boardSync.error='';
   }catch(e){
-    boardSync.error=e.message;
-    notifyBoardAuthError(e.message);
+    if(e.network || e.auth) markDisconnected_(e);
+    else boardSync.error=e.message;
   } finally {
     boardSync.fetching=false; boardSyncStatus();
   }
 }
+// 검색창·필터에 입력 중이면(한글 조합 중일 수 있음) 지금 다시 그리면 글자가 깨지므로, 데이터만 반영해 두고
+// 그 칸을 벗어날 때 그린다.
+function renderAfterServerApply_(){
+  renderUserSwitcher();
+  if(toolbarFocused_()){ boardSync.needsRender=true; return; }
+  boardSync.needsRender=false;
+  renderCurrent();
+}
+document.addEventListener('focusout', ()=>setTimeout(()=>{
+  if(boardSync.needsRender && !toolbarFocused_() && !isEditingTaskData_() && !document.hidden){ boardSync.needsRender=false; renderCurrent(); }
+}, 0));
 window.addEventListener('beforeunload', e=>{
-  if(window.storage.mode==='google' && boardSync.pending){ e.preventDefault(); e.returnValue=''; }
+  // 보낼 목록은 이 PC에 남아 다음에 열 때 자동으로 올라가지만, 그 전까지 다른 사람에게는 안 보이므로 알려준다.
+  if(boardSync.pending){ e.preventDefault(); e.returnValue=''; }
 });
 
 function renderSyncSettings(){
   const body=document.getElementById('settingsBody');
   body.innerHTML=`<div class="panel"><h3>Google Sheets 업무 공유</h3>
     <p>모든 PC에서 같은 Apps Script 배포 주소와 같은 공유 토큰을 사용하세요.</p>
-    <p><b>${window.storage.mode==='google'?'공유 서버 연결됨':'공유 미연결 — 현재 이 PC에만 저장 중'}</b></p>
+    <p><b>${boardSync.connected?'공유 서버 연결됨':'공유 연결 끊김 — 자동 재연결 중(수정 내용은 이 PC에 보관 후 연결되면 자동 저장)'}</b>${boardSync.pending?` · 보낼 목록 ${boardSync.pending}건`:''}</p>
     <p style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</p>
     <label for="boardApiUrl">Apps Script 웹 앱 URL (/exec)</label>
     <input id="boardApiUrl" type="url" style="width:100%;padding:9px;margin:8px 0" value="${escapeHtml(boardSync.url)}">
@@ -1523,6 +1724,9 @@ function renderSyncSettings(){
       lines.push((data.ok===true?'✅':'⚠️')+' 4) 실제 서버 호출 — HTTP '+res.status+', '+(data.ok===true?'정상':(data.code==='AUTH'?'토큰 불일치(AUTH)':'오류: '+(data.error||'?')))+' ('+ms+'ms)');
     }catch(e){ lines.push('❌ 4) 실제 서버 호출 — 실패: '+e.name+' / '+e.message); }
     lines.push('※ 1~3이 ❌이면 이 PC 네트워크가 막는 것, 1~3은 ✅인데 4가 ❌이면 저장된 주소가 잘못됐거나 서버 문제입니다. 이 화면을 캡처해서 알려 주세요.');
+    let fails=[]; try{ fails=JSON.parse(localStorage.getItem(BOARD_FAILLOG_KEY)||'[]'); }catch(e){}
+    lines.push('— 이 PC의 최근 통신 실패 기록 '+fails.length+'건 (최신순, 최대 20건 표시) —');
+    fails.slice(0,20).forEach(f=>lines.push(formatSavedAt(f.t)+' · '+f.action+' · '+f.ms+'ms · '+f.msg));
     show();
   };
   document.getElementById('boardExportLocal').onclick=()=>{
@@ -5946,13 +6150,14 @@ renderNotifyToggleBtn();
   if(LABEL_LINK && !linkedTask()) await setLabelLink(null); // 연결된 업무가 사라졌으면 정리
   renderCurrent();
   startBoardShared();
-  setInterval(refreshBoardShared,15000);
-  window.addEventListener('focus',()=>{ renderCurrent(); refreshBoardShared(); });
+  setInterval(refreshBoardShared,10000);
+  window.addEventListener('focus',()=>{ renderCurrent(); reconnectNow_(); refreshBoardShared(); });
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden) return;
     // 탭이 안 보이는 동안에는 데이터는 갱신했어도 화면은 다시 그리지 않았으므로, 다시 보일 때 한 번 그려준다
     // (그 사이 revision이 그대로면 refreshBoardShared 자체는 아무 것도 다시 그리지 않고 끝나기 때문).
     renderCurrent();
+    reconnectNow_();
     refreshBoardShared();
   });
 })();
