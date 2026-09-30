@@ -133,6 +133,18 @@
   .navbtn.active{background:var(--primary); color:#fff;}
   .navbtn .dot{width:6px; height:6px; border-radius:50%; background:currentColor; opacity:.55; flex:0 0 auto;}
   .navbtn .nav-ico{font-size:14px; line-height:1; width:18px; text-align:center; flex:0 0 auto;}
+  .nav-list{display:flex; flex-direction:column; gap:2px;}
+  .navbtn.nav-hidden{display:none;}
+  .nav-edit-btn{margin-top:6px; padding:6px 10px; border:none; background:transparent; color:var(--muted-2); font:inherit; font-size:11.5px; text-align:left; cursor:pointer; border-radius:7px;}
+  .nav-edit-btn:hover{background:var(--paper); color:var(--ink);}
+  .menu-edit-list{display:flex; flex-direction:column; gap:6px;}
+  .menu-edit-row{display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--border); border-radius:9px; background:var(--paper); cursor:grab;}
+  .menu-edit-row.off .menu-edit-name{opacity:.45; text-decoration:line-through;}
+  .menu-edit-row.dragging{opacity:.4;}
+  .menu-edit-grip{color:var(--muted-2); font-size:12px; letter-spacing:-2px;}
+  .menu-edit-name{flex:1; display:flex; align-items:center; gap:8px; font-size:13px;}
+  .menu-edit-show{display:flex; align-items:center; gap:4px; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap;}
+  .menu-edit-show input{width:auto; margin:0;}
   .nav-badge{
     margin-left:auto; background:var(--accent); color:#fff; font-size:10px; font-weight:700;
     border-radius:20px; padding:1px 6px; font-family:"SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
@@ -898,6 +910,7 @@
       </svg>
       <span class="brand-word">생산기술팀<span class="brand-sub">업무 프로세스 보드</span></span>
     </button>
+    <div class="nav-list" id="navList">
     <button class="navbtn active" data-view="dashboard"><span class="nav-ico">📊</span>대시보드</button>
     <button class="navbtn" data-view="board"><span class="nav-ico">🗂️</span>상태별 보드</button>
     <button class="navbtn" data-view="list"><span class="nav-ico">📋</span>전체 목록</button>
@@ -909,6 +922,8 @@
     <button class="navbtn" data-view="mesorder"><span class="nav-ico">🔍</span>SAP 작지번호 조회</button>
     <button class="navbtn" data-view="preapplied"><span class="nav-ico">📌</span>선적용 업무</button>
     <button class="navbtn" data-view="settings"><span class="nav-ico">⚙️</span>기본 설정</button>
+    </div>
+    <button type="button" class="nav-edit-btn" id="navEditBtn">✎ 메뉴 순서·표시 편집</button>
     <div class="sidebar-foot">
       <div class="user-box">
         <div class="user-box-label">현재 작업자</div>
@@ -2484,6 +2499,97 @@ function applyMenuPermissions(){
     if(btn) btn.style.display = userHasMenuAccess(key) ? '' : 'none';
   });
 }
+// ---- 사용자별 메뉴 순서·숨기기 ----
+// 계정이 있으면 팀원 목록(서버)에 저장해 어느 PC에서 로그인해도 같게, GUEST는 이 PC에만 저장한다.
+const MENU_PREFS_LOCAL_KEY = 'ppe_menu_prefs';
+const DEFAULT_MENU_ORDER = [...document.querySelectorAll('#navList .navbtn')].map(b=>b.dataset.view);
+function menuPrefs_(){
+  const me = currentUser();
+  if(me) return me.menuPrefs || {};
+  try{ return JSON.parse(localStorage.getItem(MENU_PREFS_LOCAL_KEY)||'{}'); }catch(e){ return {}; }
+}
+function applyMenuLayout_(){
+  const list = document.getElementById('navList');
+  const p = menuPrefs_(), hidden = new Set(p.hidden||[]);
+  const order = [...(p.order||[]).filter(v=>DEFAULT_MENU_ORDER.includes(v)), ...DEFAULT_MENU_ORDER.filter(v=>!(p.order||[]).includes(v))];
+  order.forEach(v=>{ const b = list.querySelector(`.navbtn[data-view="${v}"]`); b.classList.toggle('nav-hidden', hidden.has(v)); list.appendChild(b); });
+  // 보고 있던 화면의 메뉴를 숨겼으면 보이는 첫 메뉴로 옮긴다.
+  const active = list.querySelector('.navbtn.active');
+  if(active && active.classList.contains('nav-hidden')){
+    const first = [...list.querySelectorAll('.navbtn:not(.nav-hidden)')].find(b=>b.style.display!=='none' && b.dataset.view!=='labeldata_ai');
+    if(first) first.click();
+  }
+}
+async function saveMenuPrefs_(prefs){
+  const me = currentUser();
+  if(!me){ try{ localStorage.setItem(MENU_PREFS_LOCAL_KEY, JSON.stringify(prefs)); }catch(e){} return; }
+  // 다른 사람이 그사이 바꾼 팀원 정보를 덮어쓰지 않도록 서버의 최신 목록에서 내 항목만 고쳐 저장한다.
+  try{ const cfg = await boardRequest('boardGetConfig'); if(Array.isArray(cfg.users) && cfg.users.length) USERS = cfg.users; }catch(e){}
+  const mine = USERS.find(u=>u.id===me.id);
+  if(mine) mine.menuPrefs = prefs;
+  await persistUsers();
+}
+function openMenuEditor_(){
+  const overlay = document.getElementById('overlay'), modal = document.getElementById('modal');
+  const p = menuPrefs_();
+  const label = v=>{ const b=document.querySelector(`#navList .navbtn[data-view="${v}"]`); const c=b.cloneNode(true); c.querySelectorAll('.nav-badge').forEach(x=>x.remove()); return c.innerHTML; };
+  let order = [...document.querySelectorAll('#navList .navbtn')].map(b=>b.dataset.view).filter(v=>v!=='labeldata_ai' || userHasMenuAccess(v));
+  const hidden = new Set(p.hidden||[]);
+  const draw = ()=>{
+    modal.innerHTML = `
+      <div class="modal-x"><button class="closebtn" id="closeModal">✕</button></div>
+      <div class="modal-head"><h2>메뉴 순서·표시 편집</h2></div>
+      <div class="modal-body">
+        <p style="font-size:12.5px; color:var(--muted); margin-top:0;">끌어서 옮기거나 ↑↓로 순서를 바꾸고, 체크를 끄면 메뉴가 숨겨집니다. ${currentUser()?'내 계정에 저장되어 어느 PC에서 로그인해도 같게 보입니다.':'GUEST는 이 PC에만 저장됩니다.'}</p>
+        <div class="menu-edit-list">${order.map((v,i)=>`
+          <div class="menu-edit-row ${hidden.has(v)?'off':''}" draggable="true" data-view="${v}">
+            <span class="menu-edit-grip" aria-hidden="true">⋮⋮</span>
+            <span class="menu-edit-name">${label(v)}</span>
+            <button type="button" class="closebtn" data-move="-1" aria-label="위로" ${i===0?'disabled':''}>↑</button>
+            <button type="button" class="closebtn" data-move="1" aria-label="아래로" ${i===order.length-1?'disabled':''}>↓</button>
+            <label class="menu-edit-show"><input type="checkbox" ${hidden.has(v)?'':'checked'}> 표시</label>
+          </div>`).join('')}</div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="menuReset">기본값으로</button>
+        <span class="save-hint" id="menuHint"></span>
+        <button class="btn" id="menuSave">저장</button>
+      </div>`;
+    modal.querySelector('#closeModal').addEventListener('click', closeModal);
+    modal.querySelectorAll('.menu-edit-row').forEach(row=>{
+      const v = row.dataset.view;
+      row.querySelectorAll('[data-move]').forEach(b=>b.addEventListener('click', ()=>{
+        const i = order.indexOf(v), j = i + Number(b.dataset.move);
+        [order[i], order[j]] = [order[j], order[i]]; draw();
+        modal.querySelector(`.menu-edit-row[data-view="${v}"] [data-move="${b.dataset.move}"]`)?.focus();
+      }));
+      row.querySelector('input').addEventListener('change', e=>{ e.target.checked ? hidden.delete(v) : hidden.add(v); row.classList.toggle('off', !e.target.checked); });
+      row.addEventListener('dragstart', e=>{ e.dataTransfer.setData('text/plain', v); row.classList.add('dragging'); });
+      row.addEventListener('dragend', ()=>row.classList.remove('dragging'));
+      row.addEventListener('dragover', e=>e.preventDefault());
+      row.addEventListener('drop', e=>{
+        e.preventDefault();
+        const from = e.dataTransfer.getData('text/plain');
+        if(!from || from===v) return;
+        order.splice(order.indexOf(from), 1);
+        const r = row.getBoundingClientRect();
+        order.splice(order.indexOf(v) + (e.clientY > r.top + r.height/2 ? 1 : 0), 0, from);
+        draw();
+      });
+    });
+    modal.querySelector('#menuReset').addEventListener('click', ()=>{ order = DEFAULT_MENU_ORDER.filter(v=>order.includes(v)); hidden.clear(); draw(); });
+    modal.querySelector('#menuSave').addEventListener('click', async ()=>{
+      if(order.every(v=>hidden.has(v))){ modal.querySelector('#menuHint').textContent = '메뉴를 하나 이상은 표시해 주세요.'; return; }
+      modal.querySelector('#menuSave').disabled = true;
+      await saveMenuPrefs_({order, hidden:[...hidden]});
+      closeModal();
+      applyMenuLayout_();
+    });
+  };
+  draw();
+  overlay.classList.add('open');
+}
+document.getElementById('navEditBtn')?.addEventListener('click', ()=>{ document.getElementById('sidebar').classList.remove('open'); openMenuEditor_(); });
 const COLOR_PALETTE = ['#2f6f4f','#b8860b','#3a6b78','#7b5ea7','#b3423a','#1e8a8a','#a6337a','#5b6eae'];
 function nextPaletteColor(){ return COLOR_PALETTE[USERS.length % COLOR_PALETTE.length]; }
 
@@ -2547,6 +2653,7 @@ function resolveIdentity_(){
   renderLoginGate_();
   renderUserSwitcher();
   applyMenuPermissions();
+  applyMenuLayout_();
   // 계정 선택은 서버의 최신 팀원 목록을 받은 뒤에만 띄운다(오래된 목록으로 연결하면 서버 목록을 덮어쓸 수 있음).
   let skipped = false; try{ skipped = sessionStorage.getItem('ppe_guest_chosen')===email; }catch(e){}
   if(!linked && email && boardSync.everConnected && !needsLoginGate_() && !skipped) openAccountPicker_();
