@@ -191,6 +191,7 @@
   .acct-opt:hover{border-color:var(--primary); background:var(--primary-tint);}
   .acct-opt:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
   .acct-opt:disabled{opacity:.6; cursor:default;}
+  .acct-opt.armed{border-color:var(--primary); background:var(--primary-tint); box-shadow:0 0 0 1px var(--primary) inset;}
   /* 사이드바의 로그인 사용자 표시 */
   .cur-user-who{flex:1; min-width:0; text-align:left; padding:6px 8px; border:1px solid var(--border); border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .cur-user-who:hover{border-color:var(--primary);}
@@ -2273,15 +2274,26 @@ function renderSyncSettings(){
   const againBtn=document.getElementById('boardLoginAgain');
   if(againBtn) againBtn.onclick = FB.on ? (()=>FB.user ? fbSignOut_() : fbSignIn_()) : goToLoginPortal_;
   const migBtn=document.getElementById('fbMigrateBtn');
+  // 브라우저 확인 창(confirm)은 "대화상자 차단"이 켜져 있으면 보이지 않고 곧바로 취소돼 버튼이 먹통처럼 보인다 —
+  // 화면 안에서 한 번 더 누르게 해서 확인한다.
   if(migBtn) migBtn.onclick=async()=>{
-    if(!confirm('구글 시트의 데이터를 Firebase로 복사할까요? (Firebase 쪽 내용은 시트 기준으로 맞춰집니다)')) return;
-    const msg=document.getElementById('fbMigrateMsg'); migBtn.disabled=true;
+    const msg=document.getElementById('fbMigrateMsg');
+    if(!migBtn.dataset.armed){
+      migBtn.dataset.armed='1'; migBtn.textContent='한 번 더 누르면 복사 시작';
+      msg.textContent='Firebase 쪽 내용은 시트 기준으로 맞춰집니다.';
+      setTimeout(()=>{ if(migBtn.dataset.armed && !migBtn.disabled){ delete migBtn.dataset.armed; migBtn.textContent='구글 시트 → Firebase 복사'; msg.textContent=''; } }, 6000);
+      return;
+    }
+    delete migBtn.dataset.armed; migBtn.textContent='구글 시트 → Firebase 복사';
+    // 복사 중에 팀원 데이터가 들어오면 화면이 다시 그려지므로, 진행 상황은 따로 들고 있다가 다시 그린 화면에도 보여 준다.
+    const say = t=>{ FB.migrateMsg = t; const m=document.getElementById('fbMigrateMsg'); if(m) m.textContent=t; const b=document.getElementById('fbMigrateBtn'); if(b) b.disabled=!!FB.migrating; };
+    FB.migrating = true; say('시작합니다…');
     try{
-      const r = await fbMigrateFromSheets_(t=>{ msg.textContent=t; });
-      msg.textContent = `완료 — 업무 ${r.tasks}건, 팀원 ${r.users}명, 활동 로그 ${r.activity}건을 복사했습니다.`;
-    }catch(e){ msg.textContent = '실패: '+(e.message||e); }
-    migBtn.disabled=false;
+      const r = await fbMigrateFromSheets_(say);
+      FB.migrating = false; say(`완료 — 업무 ${r.tasks}건, 팀원 ${r.users}명, 활동 로그 ${r.activity}건을 복사했습니다.`);
+    }catch(e){ FB.migrating = false; say('실패: '+(e.message||e)); }
   };
+  if(migBtn && FB.migrateMsg){ document.getElementById('fbMigrateMsg').textContent = FB.migrateMsg; migBtn.disabled = !!FB.migrating; }
   const revealBtn=document.getElementById('boardTokenReveal');
   if(revealBtn) revealBtn.onclick=()=>{ const i=document.getElementById('boardApiToken'); const show=i.type==='password'; i.type=show?'text':'password'; revealBtn.textContent=show?'가리기':'보기'; };
   const connectBtn=document.getElementById('boardConnect');
@@ -3024,7 +3036,14 @@ function openAccountPicker_(){
   });
   wrap.querySelectorAll('.acct-opt').forEach(b=>b.addEventListener('click', async ()=>{
     const u0 = USERS.find(u=>u.id===b.dataset.id);
-    if(!u0 || !confirm(`"${u0.name}" 계정을 ${email} 에 연결할까요?\n한 번 연결하면 이후 변경은 관리자만 할 수 있습니다.`)) return;
+    if(!u0) return;
+    // 확인은 브라우저 확인 창 대신 같은 버튼을 한 번 더 누르게 한다(확인 창이 차단된 브라우저에서도 동작).
+    if(b.dataset.armed!=='1'){
+      wrap.querySelectorAll('.acct-opt').forEach(x=>{ delete x.dataset.armed; x.classList.remove('armed'); });
+      b.dataset.armed='1'; b.classList.add('armed');
+      msg.textContent = `"${u0.name}"을(를) 한 번 더 누르면 ${email} 에 연결됩니다. 연결 후 변경은 관리자만 할 수 있습니다.`;
+      return;
+    }
     wrap.querySelectorAll('button').forEach(x=>x.disabled=true);
     msg.textContent = '연결하는 중…';
     try{
