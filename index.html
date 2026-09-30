@@ -974,6 +974,320 @@
 
 const BOARD_DEFAULT_API='https://script.google.com/macros/s/AKfycbwxBnE9j7VfeX-vwd8W-mn2tgYx5QqjD5DHVB2pp1U25WtOjOQa7MMZJmhZ0t-_H-09/exec';
 
+// ================= Firebase (업무 보드의 로그인·저장·실시간 동기화) =================
+// 업무 보드 요청(boardXxx)만 Firebase로 보내고, 나머지 도구(MES·BOM 이력·라벨·선적용)는 지금처럼 Apps Script를 쓴다.
+// 켜는 조건: FB_DEFAULT_ON이거나 주소에 ?fb=1 (관리자 시험용). ?fb=0이면 강제로 끔(되돌리기용).
+// 개발 테스트(localhost 전용): ?fbdev=실행ID&as=이메일 → 실제 Firebase의 devtest/실행ID 아래 가짜 데이터로, 로그인 없이 동작.
+// Firebase 라이브러리를 불러오지 못하면(회사 망 차단 등) 자동으로 예전 방식(Apps Script)으로 동작한다.
+const FB_CONFIG = {
+  apiKey: 'AIzaSyD_fNjnDINmEZNpHyIwbfckk4-qjn0E1Eo',
+  authDomain: 'processboard-intellian.firebaseapp.com',
+  databaseURL: 'https://processboard-intellian-default-rtdb.asia-southeast1.firebasedatabase.app',
+  projectId: 'processboard-intellian',
+  storageBucket: 'processboard-intellian.firebasestorage.app',
+  messagingSenderId: '66318181444',
+  appId: '1:66318181444:web:9864f750455377f4c48811',
+};
+const FB_DEFAULT_ON = false;
+const FB_SDK_VER = '10.12.2';
+const FB_ALLOWED_DOMAIN = 'intelliantech.com';
+const FB_SUPERADMINS = ['jaeheung.nam@intelliantech.com']; // 데이터 이전 등 관리 작업을 할 수 있는 계정(보안 규칙과 같게 유지)
+const FB_BOARD_ACTIONS = new Set(['boardPing','boardRevision','boardPresence','boardGetTasks','boardGetConfig','boardGetActivity','boardUpsertTask','boardDeleteTask','boardAppendActivity','boardSaveConfig']);
+const FB = (()=>{
+  const q = new URLSearchParams(location.search);
+  const devRun = (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && q.get('fbdev')) || '';
+  const wanted = q.get('fb')==='1' ? true : q.get('fb')==='0' ? false : (devRun ? true : FB_DEFAULT_ON);
+  return { wanted, on:false, dev:!!devRun, base: devRun ? 'devtest/'+devRun : 'boards/main', devEmail:(q.get('as')||'').toLowerCase(),
+    mirrorSheets: FB_DEFAULT_ON && !devRun, db:null, rtdb:null, user:null, mirror:null, rev:0, presence:[],
+    config:{users:[], models:[], checklists:{}}, tasksSynced:false, configSynced:0, fsOnline:false, listenErr:null, attached:false, unsub:[] };
+})();
+function fbLoadScript_(src){ return new Promise((res, rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(Error('load '+src)); document.head.appendChild(s); }); }
+async function fbInit_(){
+  if(!FB.wanted) return;
+  try{
+    const base = `https://www.gstatic.com/firebasejs/${FB_SDK_VER}/`;
+    await fbLoadScript_(base+'firebase-app-compat.js');
+    await Promise.all(['firebase-auth-compat.js','firebase-firestore-compat.js','firebase-database-compat.js'].map(f=>fbLoadScript_(base+f)));
+    firebase.initializeApp(FB_CONFIG);
+    FB.db = firebase.firestore();
+    // 회사 VPN·프록시가 실시간 연결 방식을 막는 경우를 대비해, 막히면 일반 요청 방식으로 자동 전환
+    FB.db.settings({ignoreUndefinedProperties:true, experimentalAutoDetectLongPolling:true, merge:true});
+    FB.rtdb = firebase.database();
+    FB.on = true;
+  }catch(e){
+    console.error('[Firebase 불러오기 실패 — 예전 방식으로 동작]', e);
+    FB.on = false; return;
+  }
+  FB.rtdb.ref('.info/connected').on('value', s=>{
+    if(s.val()){ fbPresenceLast = ''; if(typeof sendPresenceNow_==='function') sendPresenceNow_(); } // 다시 연결되면 내 접속 표시를 다시 올림
+  });
+  if(FB.dev){ FB.user = {email: FB.devEmail || 'dev@'+FB_ALLOWED_DOMAIN}; return; }
+  await new Promise(res=>{
+    let first = true;
+    firebase.auth().onAuthStateChanged(u=>{
+      if(u && !(u.email||'').toLowerCase().endsWith('@'+FB_ALLOWED_DOMAIN)){
+        firebase.auth().signOut(); u = null;
+        alert(`회사 구글 계정(@${FB_ALLOWED_DOMAIN})으로만 로그인할 수 있습니다.`);
+      }
+      FB.user = u;
+      if(first){ first = false; res(); }
+    });
+  });
+}
+async function fbSignIn_(){
+  const p = new firebase.auth.GoogleAuthProvider();
+  p.setCustomParameters({hd:FB_ALLOWED_DOMAIN, prompt:'select_account'});
+  try{ await firebase.auth().signInWithPopup(p); location.reload(); }
+  catch(e){ if(!/popup-closed|cancelled-popup/.test(e.code||'')) alert('로그인하지 못했습니다: '+(e.message||e)); }
+}
+async function fbSignOut_(){ try{ await firebase.auth().signOut(); }catch(e){} location.reload(); }
+const fbCol_ = name => FB.db.collection(FB.base+'/'+name);
+const fbTs_ = ()=>firebase.firestore.FieldValue.serverTimestamp();
+const fbNewRev_ = ()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+function fbStripMeta_(d){ const t = {...d}; ['_rev','updatedAt','updatedBy','deleted','seq','createdAt'].forEach(k=>delete t[k]); return t; }
+
+// ---- 이 PC에 두는 서버 사본(바뀐 것만 받아오기 위한 기준) ----
+function fbMirrorKey_(){ return 'fb_mirror_v1:'+FB.base; }
+function fbLoadMirror_(){
+  try{ FB.mirror = JSON.parse(localStorage.getItem(fbMirrorKey_())||'null'); }catch(e){ FB.mirror = null; }
+  if(!FB.mirror || FB.mirror.v!==1) FB.mirror = {v:1, tasks:{}, seq:{}, taskSync:0, acts:[], actSync:0};
+}
+let fbSaveTimer = null;
+function fbSaveMirror_(){ clearTimeout(fbSaveTimer); fbSaveTimer = setTimeout(()=>{ try{ localStorage.setItem(fbMirrorKey_(), JSON.stringify(FB.mirror)); }catch(e){} }, 400); }
+function fbTaskList_(){ return Object.values(FB.mirror.tasks).sort((a,b)=>(FB.mirror.seq[a.id]||0)-(FB.mirror.seq[b.id]||0)); }
+
+// 실시간 구독: 업무는 "마지막으로 받은 시점 이후 바뀐 것"만, 팀원·설정은 전부(작음), 활동 로그는 처음에 최근 500건 후 새것만.
+function fbAttach_(){
+  if(FB.attached) return;
+  FB.attached = true; FB.listenErr = null; FB.tasksSynced = false; FB.configSynced = 0;
+  fbLoadMirror_();
+  const onErr = what => err=>{ console.error('[Firebase 구독 오류]', what, err); FB.listenErr = err; FB.fsOnline = false; fbDetach_(); };
+  const since = firebase.firestore.Timestamp.fromMillis(Math.max(0, FB.mirror.taskSync - 2000));
+  FB.unsub.push(fbCol_('tasks').where('updatedAt','>=',since).onSnapshot({includeMetadataChanges:true}, snap=>{
+    FB.fsOnline = !snap.metadata.fromCache;
+    let changed = false;
+    snap.docChanges({includeMetadataChanges:true}).forEach(ch=>{
+      if(ch.doc.metadata.hasPendingWrites) return;
+      const d = ch.doc.data(), id = ch.doc.id;
+      const ms = d.updatedAt && d.updatedAt.toMillis ? d.updatedAt.toMillis() : 0;
+      if(ms > FB.mirror.taskSync) FB.mirror.taskSync = ms;
+      if(ch.type==='removed' && !d.deleted) return; // 조회 범위를 벗어난 것일 뿐(삭제 아님)
+      if(d.deleted){ delete FB.mirror.tasks[id]; delete FB.mirror.seq[id]; }
+      else { const t = fbStripMeta_(d); t.id = id; t._updatedAt = d._rev||''; t._updatedBy = d.updatedBy||''; FB.mirror.tasks[id] = t; FB.mirror.seq[id] = d.seq||0; }
+      changed = true;
+    });
+    if(!snap.metadata.fromCache) FB.tasksSynced = true;
+    if(changed){ FB.rev++; fbSaveMirror_(); fbKick_(); }
+  }, onErr('tasks')));
+  const cfgDone = bit=>{ FB.configSynced |= bit; };
+  FB.unsub.push(fbCol_('users').onSnapshot(snap=>{
+    FB.config.users = snap.docs.map(d=>({...d.data(), id:d.id})).sort((a,b)=>(a.order||0)-(b.order||0)).map(u=>{ const x={...u}; delete x.order; return x; });
+    cfgDone(1); fbConfigChanged_();
+  }, onErr('users')));
+  FB.unsub.push(fbCol_('config').onSnapshot(snap=>{
+    snap.docs.forEach(d=>{ if(d.id==='models') FB.config.models = d.data().list||[]; if(d.id==='checklists') FB.config.checklists = d.data().map||{}; });
+    cfgDone(2); fbConfigChanged_();
+  }, onErr('config')));
+  fbAttachActivity_(onErr('activity'));
+  FB.rtdb.ref(FB.base+'/presence').on('value', s=>{
+    FB.presence = Object.values(s.val()||{});
+    if(typeof handlePresenceResponse_==='function' && typeof PRESENCE!=='undefined') handlePresenceResponse_({presence:FB.presence});
+  }, err=>console.error('[접속 표시 구독 오류]', err));
+}
+async function fbAttachActivity_(onErr){
+  try{
+    if(!FB.mirror.actSync){
+      const snap = await fbCol_('activity').orderBy('createdAt','desc').limit(500).get();
+      FB.mirror.acts = snap.docs.map(d=>fbActFromDoc_(d));
+      FB.mirror.actSync = snap.docs.reduce((m,d)=>Math.max(m, d.data().createdAt ? d.data().createdAt.toMillis() : 0), 0);
+      fbSaveMirror_();
+    }
+    const since = firebase.firestore.Timestamp.fromMillis(Math.max(0, FB.mirror.actSync - 2000));
+    // includeMetadataChanges: 이 PC가 쓴 로그는 "서버 확인 전"으로 먼저 오고, 확인 후 알림은 이 옵션이 있어야 온다.
+    FB.unsub.push(fbCol_('activity').where('createdAt','>=',since).onSnapshot({includeMetadataChanges:true}, snap=>{
+      let changed = false;
+      snap.docChanges({includeMetadataChanges:true}).forEach(ch=>{
+        if(ch.type==='removed' || ch.doc.metadata.hasPendingWrites) return;
+        const e = fbActFromDoc_(ch.doc), ms = ch.doc.data().createdAt ? ch.doc.data().createdAt.toMillis() : 0;
+        if(ms > FB.mirror.actSync) FB.mirror.actSync = ms;
+        if(!FB.mirror.acts.some(a=>a.id===e.id)){ FB.mirror.acts.push(e); changed = true; }
+      });
+      if(changed){ FB.mirror.acts.sort((a,b)=>(b.ts||0)-(a.ts||0)); FB.mirror.acts = FB.mirror.acts.slice(0,500); fbSaveMirror_(); fbActivityChanged_(); }
+    }, onErr));
+  }catch(e){ onErr(e); }
+}
+function fbActFromDoc_(d){ const e = {...d.data()}; delete e.createdAt; if(!e.id) e.id = d.id; return e; }
+function fbDetach_(){ FB.unsub.forEach(u=>{ try{ u(); }catch(e){} }); FB.unsub = []; try{ FB.rtdb.ref(FB.base+'/presence').off(); }catch(e){} FB.attached = false; }
+let fbKickT = null;
+function fbKick_(){ clearTimeout(fbKickT); fbKickT = setTimeout(()=>{ if(boardSync.fetching || boardSync.sending) return fbKick_(); refreshBoardShared(); }, 250); }
+// 연결된 뒤 팀원·설정이 바뀌면(다른 사람이 계정 연결·이름 변경 등) 바로 반영
+function fbConfigChanged_(){
+  if(!boardSync.everConnected || FB.configSynced!==3) return;
+  const cfg = boardSync.outboxConfig || {};
+  if(!cfg.users) USERS = JSON.parse(JSON.stringify(FB.config.users));
+  if(!cfg.models) MODELS = FB.config.models.slice();
+  if(!cfg.checklists) CHECKLISTS = JSON.parse(JSON.stringify(FB.config.checklists));
+  resolveIdentity_();
+  if(!isEditingTaskData_()) renderCurrent();
+}
+function fbActivityChanged_(){
+  if(!boardSync.everConnected) return;
+  const unsent = boardSync.outboxActivity.filter(a=>!FB.mirror.acts.some(s=>s.ts===a.ts)).slice().reverse();
+  ACTIVITY_LOG = [...unsent, ...FB.mirror.acts];
+  try{ localStorage.setItem(boardLocalKey(ACTIVITY_KEY,true), JSON.stringify(ACTIVITY_LOG)); }catch(e){}
+  if(typeof renderNotifBadge==='function') renderNotifBadge();
+  if(currentView==='notif' && !isEditingTaskData_()) renderCurrent();
+}
+// 서버에서 처음 한 번 받아올 때까지 기다린다(이미 받았으면 즉시). 구독이 오류로 끊겼으면 다시 붙인다.
+function fbWaitReady_(ms=20000){
+  if(FB.listenErr){ const e = FB.listenErr; FB.listenErr = null; fbAttach_(); if(/permission-denied|unauthenticated/.test(e.code||'')) return Promise.reject(e); }
+  fbAttach_();
+  return new Promise((res, rej)=>{
+    const t0 = Date.now();
+    const tick = ()=>{
+      if(FB.tasksSynced && FB.configSynced===3) return res();
+      if(FB.listenErr) return rej(FB.listenErr);
+      if(Date.now()-t0 > ms){ const e = Error('Firebase에서 응답이 없습니다(네트워크 확인).'); e.network = true; return rej(e); }
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
+}
+
+// ---- 보드 요청을 Firebase로 처리 ----
+async function fbRequest_(action, b){
+  try{
+    let out;
+    switch(action){
+      case 'boardPing': out = {ok:true, boardApi:3}; break;
+      case 'boardRevision': out = {ok:true, revision:String(FB.rev)}; break;
+      case 'boardPresence': fbSetPresence_(b); out = {ok:true, revision:String(FB.rev), presence:FB.presence}; break;
+      case 'boardGetTasks': await fbWaitReady_(); out = {ok:true, revision:String(FB.rev), tasks:JSON.parse(JSON.stringify(fbTaskList_()))}; break;
+      case 'boardGetConfig': await fbWaitReady_(); out = {ok:true, revision:String(FB.rev), ...JSON.parse(JSON.stringify(FB.config))}; break;
+      case 'boardGetActivity': await fbWaitReady_(); out = {ok:true, activity:FB.mirror.acts.slice()}; break;
+      case 'boardUpsertTask': out = await fbUpsertTask_(b); break;
+      case 'boardDeleteTask': out = await fbDeleteTask_(b); break;
+      case 'boardAppendActivity': out = await fbAppendActivity_(b.entry); break;
+      case 'boardSaveConfig': out = await fbSaveConfig_(b); break;
+    }
+    if(boardSync.authBannerOn) setBoardAuthBanner(false);
+    return out;
+  }catch(e){ throw fbError_(action, e); }
+}
+function fbError_(action, e){
+  if(e && (e.network || e.auth)) return e;
+  const code = (e && e.code) || '';
+  const err = Error('Firebase: '+((e && e.message) || e));
+  err.network = /unavailable|deadline-exceeded|network|offline/i.test(code+' '+err.message);
+  err.auth = code==='unauthenticated' || (code==='permission-denied' && !FB.user);
+  if(code==='permission-denied' && FB.user) err.message = '권한이 없습니다(GUEST는 조회만 가능): '+err.message;
+  if(err.auth) setBoardAuthBanner(true);
+  logSyncFailure_(action, err, 0);
+  return err;
+}
+async function fbUpsertTask_(b){
+  const task = JSON.parse(JSON.stringify(b.task)); const id = task.id;
+  delete task.id; delete task._updatedAt; delete task._updatedBy;
+  const ref = fbCol_('tasks').doc(id), rev = fbNewRev_();
+  const out = await FB.db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const cur = snap.exists ? snap.data() : null;
+    // 충돌 감지: 이 수정을 시작할 때 본 서버 판(base)과 지금 서버 판이 다르면 → 병합 절차(Apps Script 방식과 동일)
+    if(cur && !cur.deleted && !b.force && b.baseUpdatedAt && String(cur._rev||'')!==String(b.baseUpdatedAt)){
+      const st = fbStripMeta_(cur); st.id = id; st._updatedAt = cur._rev||''; st._updatedBy = cur.updatedBy||'';
+      return {conflict:st};
+    }
+    tx.set(ref, Object.assign(task, {_rev:rev, updatedAt:fbTs_(), updatedBy:b.userName||'', deleted:false, seq:(cur && cur.seq!=null) ? cur.seq : Date.now()}));
+    return {rev};
+  });
+  if(out.conflict) return {ok:false, code:'CONFLICT', serverTask:out.conflict};
+  fbMirrorToSheets_('boardUpsertTask', {task:b.task, userName:b.userName, force:true});
+  return {ok:true, updatedAt:out.rev};
+}
+async function fbDeleteTask_(b){
+  await fbCol_('tasks').doc(b.id).set({deleted:true, _rev:fbNewRev_(), updatedAt:fbTs_(), updatedBy:b.userName||''}, {merge:true}); // 내용은 남겨 둠(복구 가능)
+  fbMirrorToSheets_('boardDeleteTask', b);
+  return {ok:true};
+}
+async function fbAppendActivity_(entry){
+  const e = JSON.parse(JSON.stringify(entry));
+  const id = String(e.id || ('a'+(e.ts||Date.now())+Math.random().toString(36).slice(2,6)));
+  e.id = id;
+  await fbCol_('activity').doc(id).set({...e, createdAt:fbTs_()}); // 같은 id로 다시 보내도 한 건(재시도 안전)
+  fbMirrorToSheets_('boardAppendActivity', {entry});
+  return {ok:true};
+}
+// 팀원은 사람마다 문서 하나 — 바뀐 사람 문서만 쓴다(보안 규칙이 "자기 문서만 수정"을 확인할 수 있도록).
+// 구글 계정 연결은 links/{이메일} 문서로 따로 둬서, 규칙이 "연결된 사람인지"를 빠르게 확인한다.
+async function fbSaveConfig_(b){
+  const batch = FB.db.batch(); let n = 0;
+  if(b.models!==undefined){ batch.set(fbCol_('config').doc('models'), {list:b.models}); n++; }
+  if(b.checklists!==undefined){ batch.set(fbCol_('config').doc('checklists'), {map:b.checklists}); n++; }
+  if(b.users!==undefined){
+    const cur = new Map(FB.config.users.map((u,i)=>[u.id, {...u, order:i}]));
+    b.users.forEach((u0,i)=>{
+      const u = {...JSON.parse(JSON.stringify(u0)), order:i}, c = cur.get(u.id);
+      if(!c || JSON.stringify(Object.keys(u).sort().map(k=>[k,u[k]])) !== JSON.stringify(Object.keys(c).sort().map(k=>[k,c[k]]))){ batch.set(fbCol_('users').doc(u.id), u); n++; }
+      const oldE = ((c && c.googleEmail)||'').toLowerCase(), newE = (u.googleEmail||'').toLowerCase();
+      if(newE && newE!==oldE){ batch.set(fbCol_('links').doc(newE), {userId:u.id}); n++; }
+      if(oldE && oldE!==newE){ batch.delete(fbCol_('links').doc(oldE)); n++; }
+    });
+    cur.forEach((c,id)=>{ if(!b.users.some(u=>u.id===id)){ batch.delete(fbCol_('users').doc(id)); n++; if(c.googleEmail){ batch.delete(fbCol_('links').doc(c.googleEmail.toLowerCase())); n++; } } });
+  }
+  if(n) await batch.commit();
+  fbMirrorToSheets_('boardSaveConfig', b);
+  return {ok:true};
+}
+// 접속 표시: 바뀔 때만 올리고, 창을 닫거나 연결이 끊기면 서버가 자동으로 지운다(onDisconnect).
+let fbPresenceLast = '';
+function fbSetPresence_(p){
+  const key = JSON.stringify([p.taskId, p.mode, p.userId, p.name]);
+  if(key===fbPresenceLast) return;
+  fbPresenceLast = key;
+  const ref = FB.rtdb.ref(`${FB.base}/presence/${p.session}`);
+  if(p.taskId){
+    ref.onDisconnect().remove();
+    ref.set({s:p.session, u:p.userId||'', n:p.name||'', c:p.color||'', t:String(p.taskId), m:p.mode==='edit'?'edit':'view', at:firebase.database.ServerValue.TIMESTAMP});
+  } else ref.remove();
+}
+// 전환 후 한동안은 구글 시트에도 같이 저장해 둔다(문제가 생기면 예전 방식으로 바로 되돌릴 수 있도록). 실패해도 무시.
+function fbMirrorToSheets_(action, body){
+  if(!FB.mirrorSheets || !boardSync.token) return;
+  appsScriptRequest_(action, body).catch(e=>console.warn('[시트 사본 저장 실패]', action, e.message));
+}
+// 관리자: 구글 시트(Apps Script)의 데이터를 Firebase로 복사. 여러 번 눌러도 결과는 같다(시트 기준으로 맞춤).
+async function fbMigrateFromSheets_(report){
+  report('구글 시트에서 읽는 중…');
+  const [t, c, a] = await Promise.all([appsScriptRequest_('boardGetTasks'), appsScriptRequest_('boardGetConfig'), appsScriptRequest_('boardGetActivity')]);
+  const ops = [];
+  const sheetIds = new Set();
+  (t.tasks||[]).forEach((task,i)=>{
+    const x = JSON.parse(JSON.stringify(task)), id = String(x.id), by = x._updatedBy || 'migration';
+    sheetIds.add(id); delete x.id; delete x._updatedAt; delete x._updatedBy;
+    ops.push(['set', fbCol_('tasks').doc(id), {...x, _rev:fbNewRev_(), updatedAt:fbTs_(), updatedBy:String(by), deleted:false, seq:i}]);
+  });
+  await fbWaitReady_(60000).catch(()=>{});
+  Object.keys((FB.mirror && FB.mirror.tasks) || {}).forEach(id=>{ if(!sheetIds.has(id)) ops.push(['set', fbCol_('tasks').doc(id), {deleted:true, _rev:fbNewRev_(), updatedAt:fbTs_(), updatedBy:'migration'}, {merge:true}]); });
+  (c.users||[]).forEach((u,i)=>{
+    ops.push(['set', fbCol_('users').doc(String(u.id)), {...JSON.parse(JSON.stringify(u)), order:i}]);
+    if(u.googleEmail) ops.push(['set', fbCol_('links').doc(u.googleEmail.toLowerCase()), {userId:String(u.id)}]);
+  });
+  ops.push(['set', fbCol_('config').doc('models'), {list:c.models||[]}]);
+  ops.push(['set', fbCol_('config').doc('checklists'), {map:c.checklists||{}}]);
+  (a.activity||[]).slice(0,500).forEach(e=>{
+    const x = JSON.parse(JSON.stringify(e)), id = String(x.id || ('a'+x.ts)); x.id = id;
+    ops.push(['set', fbCol_('activity').doc(id), {...x, createdAt:firebase.firestore.Timestamp.fromMillis(Number(x.ts)||Date.now())}]);
+  });
+  for(let i=0; i<ops.length; i+=400){
+    const batch = FB.db.batch();
+    ops.slice(i, i+400).forEach(([op, ref, data, opt])=>batch.set(ref, data, opt||{}));
+    await batch.commit();
+    report(`Firebase에 쓰는 중… ${Math.min(i+400, ops.length)}/${ops.length}`);
+  }
+  return {tasks:(t.tasks||[]).length, users:(c.users||[]).length, activity:Math.min(500,(a.activity||[]).length)};
+}
+function fbIsSuperAdmin_(){ return FB.dev || FB_SUPERADMINS.includes(loginEmail_()); }
+
 // 토큰 자동 등록 링크: 주소 뒤에 #token=값 을 붙여 연 경우(예: .../index.html#token=abc) 그 값을 이 브라우저에
 // 저장하고, 주소창에서는 바로 지운다. "#" 뒤의 값은 서버·GitHub로 전송되지 않고 이 브라우저에만 남으므로,
 // 토큰을 코드(공개 저장소)에 넣지 않고도 팀원이 링크만 열면 설정 화면에 직접 입력하지 않아도 된다.
@@ -1070,7 +1384,9 @@ function logSyncFailure_(action, err, ms){
 
 function boardLocalKey(key,shared){ return 'ppe_board_'+(shared?'data:':'device:')+key; }
 
-async function boardRequest(action, body, query={}){
+// 업무 보드 요청은 Firebase가 켜져 있으면 Firebase로, 그 외(도구들)는 Apps Script로.
+function boardRequest(action, body, query){ return (FB.on && FB_BOARD_ACTIONS.has(action)) ? fbRequest_(action, body||{}) : appsScriptRequest_(action, body, query); }
+async function appsScriptRequest_(action, body, query={}){
   const u=new URL(boardSync.url);
   if(u.hostname!=='script.google.com'||!/^\/macros\/s\/.+\/exec$/.test(u.pathname)) throw Error('Apps Script /exec 배포 URL이 아닙니다.');
   const options={redirect:'follow'};
@@ -1105,7 +1421,8 @@ async function boardRequest(action, body, query={}){
       throw fail('공유 서버 일시 오류(잠시 뒤 자동 재시도): '+(data.error||''), 'network');
     }
     if(data.code==='AUTH'){
-      setBoardAuthBanner(true);
+      // Firebase 모드에서는 보드 로그인이 Firebase라, 도구(Apps Script) 쪽 토큰 문제로 보드 로그인 안내를 띄우지 않는다.
+      if(!FB.on) setBoardAuthBanner(true);
       throw fail(data.error, 'auth');
     }
     // CONFLICT는 오류가 아니라 "다른 사람이 먼저 저장했다"는 정상 응답이라 호출한 쪽(pushOneTask)이
@@ -1377,7 +1694,7 @@ function syncState_(){
   if(!boardSync.connected) return {cls:'', text:'연결 확인 중…', tip:''};
   if(boardSync.taskRetry.size) return {cls:'error', text:`카드 ${boardSync.taskRetry.size}건 저장 재시도 중 · 이 PC엔 보존됨`, tip:[...boardSync.taskRetry].map(([id,r])=>title(id)+' — '+r.msg).join('\n')};
   if(n){ const list = names(); return {cls:'pending', text:`저장 중… (${n}건 대기${list.length?' — '+list.slice(0,3).join(', ')+(list.length>3?' 외':''):''})`, tip:list.join('\n')}; }
-  return {cls:'', text: boardSync.lastSavedAt ? `최근 저장됨 (${formatSavedAt(boardSync.lastSavedAt)})` : 'Google Sheets 공유 연결됨', tip:''};
+  return {cls:'', text: boardSync.lastSavedAt ? `최근 저장됨 (${formatSavedAt(boardSync.lastSavedAt)})` : (FB.on ? '실시간 연결됨' : 'Google Sheets 공유 연결됨'), tip:''};
 }
 function boardSyncStatus(){
   boardSync.pending = pendingCount_();
@@ -1679,7 +1996,7 @@ function renderPresenceInModal_(){
   if(modal){ modal.addEventListener('input', markEdit); modal.addEventListener('change', markEdit); }
   // 창을 닫으면 곧바로 "안 보고 있음"을 알린다(못 알려도 서버에서 30초 뒤 자동으로 사라짐).
   window.addEventListener('pagehide', ()=>{
-    if(!PRESENCE.taskId || PRESENCE.supported!==true) return;
+    if(FB.on || !PRESENCE.taskId || PRESENCE.supported!==true) return; // Firebase는 서버가 자동으로 지움(onDisconnect)
     try{ navigator.sendBeacon(boardSync.url, new Blob([JSON.stringify({action:'boardPresence', token:boardSync.token, ...presencePayload_(), taskId:null})], {type:'text/plain;charset=utf-8'})); }catch(e){}
   });
 })();
@@ -1774,7 +2091,7 @@ async function startBoardShared(){
   boardSyncStatus();
   window.addEventListener('online', reconnectNow_);
   // 로그인(회사 계정 확인)이 안 된 상태로 열면 곧바로 로그인 페이지로 보낸다(5분에 한 번만 — 반복 방지).
-  if(needsLoginGate_() && !recentlyRedirected_()){ goToLoginPortal_(); return; }
+  if(!FB.on && needsLoginGate_() && !recentlyRedirected_()){ goToLoginPortal_(); return; }
   await connectBoardShared();
 }
 
@@ -1844,6 +2161,7 @@ function setBoardAuthBanner(on){
 }
 document.getElementById('loginTopBtn')?.addEventListener('click', ()=>goToLoginPortal_());
 function goToLoginPortal_(){
+  if(FB.on){ fbSignIn_(); return; } // Firebase: 구글 로그인 창(버튼을 눌렀을 때만 열 수 있음)
   if(!TOKEN_PORTAL_URL) return;
   try{ localStorage.setItem('ppe_login_redirect_at', String(Date.now())); }catch(e){}
   location.href = TOKEN_PORTAL_URL;
@@ -1852,7 +2170,7 @@ function goToLoginPortal_(){
 // 페이지로 보낸다. 단, 이미 무언가 고치기 시작했거나 창이 열려 있으면 작업 중인 화면을 떠나지 않도록 버튼만
 // 보여 준다. 로그인 페이지에서 돌아왔는데도 실패하면 무한 반복하지 않도록 5분에 한 번만 자동 이동한다.
 function maybeAutoLogin_(){
-  if(!TOKEN_PORTAL_URL || boardSync.everConnected || boardSync.editVersion>0) return;
+  if(FB.on || !TOKEN_PORTAL_URL || boardSync.everConnected || boardSync.editVersion>0) return;
   if(document.getElementById('overlay').classList.contains('open') || recentlyRedirected_()) return;
   goToLoginPortal_();
 }
@@ -1870,7 +2188,7 @@ async function refreshBoardShared(){
   if(boardSync.fetching||boardSync.sending) return;
   // 화면에 안 보이는 창(다른 탭·최소화)은 60초에 한 번만 확인한다 — 창마다 10초씩 확인하면 서버 사용량 한도를
   // 금방 넘긴다. 다시 보이면 visibilitychange에서 곧바로 확인한다.
-  if(document.hidden && boardSync.lastPollAt && Date.now()-boardSync.lastPollAt < 60000) return;
+  if(!FB.on && document.hidden && boardSync.lastPollAt && Date.now()-boardSync.lastPollAt < 60000) return; // Firebase는 실시간 구독이라 확인 비용이 없음
   boardSync.lastPollAt = Date.now();
   boardSync.fetching=true;
   const requestedAtEditVersion=boardSync.editVersion, requestedAtPushEpoch=boardSync.pushEpoch;
@@ -1933,9 +2251,10 @@ function renderSyncSettings(){
   const body=document.getElementById('settingsBody');
   const admin = isBoardAdmin_();
   // 일반 사용자에게는 서버 주소·토큰을 보여주지 않는다(로그인은 오른쪽 위 [회사 계정으로 로그인]). 관리자만 고급 설정으로 확인·변경.
-  body.innerHTML=`<div class="panel"><h3>Google Sheets 업무 공유</h3>
+  body.innerHTML=`<div class="panel"><h3>${FB.on?'Firebase 업무 공유':'Google Sheets 업무 공유'}</h3>
     <p id="syncSettingsState"></p>
-    ${TOKEN_PORTAL_URL?`<button class="btn" id="boardLoginAgain">🏢 회사 계정으로 다시 로그인</button>`:''}
+    ${FB.on?`<p style="font-size:12.5px;color:var(--muted)">로그인: <b>${escapeHtml(loginEmail_()||'로그인 안 됨')}</b>${FB.dev?' · 개발 테스트 공간('+escapeHtml(FB.base)+')':''}${FB.mirrorSheets?' · 전환 기간이라 구글 시트에도 같이 저장 중':''}</p>`:''}
+    ${FB.on ? `<button class="btn" id="boardLoginAgain">🏢 ${FB.user?'다른 계정으로 다시 로그인':'회사 계정으로 로그인'}</button>` : (TOKEN_PORTAL_URL?`<button class="btn" id="boardLoginAgain">🏢 회사 계정으로 다시 로그인</button>`:'')}
     <button class="btn btn-ghost" id="boardExportLocal" style="margin-left:8px">현재 PC 업무 백업</button>
     <button class="btn btn-ghost" id="boardDiagnose" style="margin-left:8px">🩺 연결 진단</button>
     ${admin?`<details style="margin-top:16px"><summary style="cursor:pointer;font-weight:700">관리자 고급 설정 (서버 주소·토큰)</summary>
@@ -1945,10 +2264,24 @@ function renderSyncSettings(){
     <div style="display:flex;gap:8px;align-items:center;margin:8px 0"><input id="boardApiToken" type="password" autocomplete="off" style="flex:1;padding:9px" value="${escapeHtml(boardSync.token)}" placeholder="토큰을 설정하지 않았다면 비워두세요"><button type="button" class="btn btn-ghost" id="boardTokenReveal">보기</button></div>
     <button class="btn" id="boardConnect">주소·토큰 저장 및 연결 확인</button>
     <p class="dash-note">서버 주소를 바꾸거나 토큰을 교체할 때만 사용합니다. 일반 사용자는 오른쪽 위 [회사 계정으로 로그인]으로 연결됩니다.</p></details>`:''}
+    ${(FB.on && fbIsSuperAdmin_())?`<div style="margin-top:16px;padding:12px;border:1px dashed var(--border);border-radius:10px">
+      <b>데이터 이전 (관리자)</b>
+      <p class="dash-note" style="margin:6px 0 10px">구글 시트의 업무·팀원·설정·최근 활동 로그 500건을 Firebase로 복사합니다. 여러 번 눌러도 결과는 같습니다(시트 기준으로 맞춤 — Firebase에서 따로 고친 내용은 시트 내용으로 덮입니다).</p>
+      <button class="btn" id="fbMigrateBtn">구글 시트 → Firebase 복사</button> <span id="fbMigrateMsg" class="dash-note"></span></div>`:''}
     <div id="boardConnectResult" style="margin-top:10px"></div></div>`;
   boardSyncStatus();
   const againBtn=document.getElementById('boardLoginAgain');
-  if(againBtn) againBtn.onclick=goToLoginPortal_;
+  if(againBtn) againBtn.onclick = FB.on ? (()=>FB.user ? fbSignOut_() : fbSignIn_()) : goToLoginPortal_;
+  const migBtn=document.getElementById('fbMigrateBtn');
+  if(migBtn) migBtn.onclick=async()=>{
+    if(!confirm('구글 시트의 데이터를 Firebase로 복사할까요? (Firebase 쪽 내용은 시트 기준으로 맞춰집니다)')) return;
+    const msg=document.getElementById('fbMigrateMsg'); migBtn.disabled=true;
+    try{
+      const r = await fbMigrateFromSheets_(t=>{ msg.textContent=t; });
+      msg.textContent = `완료 — 업무 ${r.tasks}건, 팀원 ${r.users}명, 활동 로그 ${r.activity}건을 복사했습니다.`;
+    }catch(e){ msg.textContent = '실패: '+(e.message||e); }
+    migBtn.disabled=false;
+  };
   const revealBtn=document.getElementById('boardTokenReveal');
   if(revealBtn) revealBtn.onclick=()=>{ const i=document.getElementById('boardApiToken'); const show=i.type==='password'; i.type=show?'text':'password'; revealBtn.textContent=show?'가리기':'보기'; };
   const connectBtn=document.getElementById('boardConnect');
@@ -2642,9 +2975,9 @@ function currentUserLabel(){
 // GUEST로 조회만 한다. GUEST 제한은 화면에서만 한다(사용자 결정, 2026-09-30).
 const LOGIN_EMAIL_KEY = 'ppe_board_login_email';
 let IS_GUEST = false;
-function loginEmail_(){ try{ return (localStorage.getItem(LOGIN_EMAIL_KEY)||'').toLowerCase(); }catch(e){ return ''; } }
+function loginEmail_(){ if(FB.on) return ((FB.user && FB.user.email) || '').toLowerCase(); try{ return (localStorage.getItem(LOGIN_EMAIL_KEY)||'').toLowerCase(); }catch(e){ return ''; } }
 function linkedUserFor_(email){ return email ? (USERS.find(u=>(u.googleEmail||'').toLowerCase()===email) || null) : null; }
-function needsLoginGate_(){ return !!TOKEN_PORTAL_URL && (!boardSync.token || !loginEmail_()); }
+function needsLoginGate_(){ if(FB.on) return !FB.user; return !!TOKEN_PORTAL_URL &&(!boardSync.token || !loginEmail_()); }
 function resolveIdentity_(){
   const email = loginEmail_();
   const linked = linkedUserFor_(email);
@@ -6605,6 +6938,7 @@ renderNotifyToggleBtn();
 
 /* ================= INIT ================= */
 (async function init(){
+  await fbInit_(); // Firebase 모드면 라이브러리·로그인 상태를 먼저 준비(아니면 즉시 통과)
   await loadUsers();
   resolveIdentity_();
   applyMenuPermissions();
