@@ -171,6 +171,28 @@
   .login-top-btn:hover{filter:brightness(1.08);}
   .login-top-btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
   .login-top-btn[hidden]{display:none;}
+  /* 로그인 전 화면 — 업무 내용이 보이지 않도록 전체를 덮는다 */
+  #loginGate{position:fixed; inset:0; z-index:9500; background:var(--paper); display:flex; align-items:center; justify-content:center; padding:16px;}
+  .login-gate-card{width:min(420px,100%); background:var(--surface); color:var(--ink); border:1px solid var(--border); border-radius:16px; padding:30px 26px; text-align:center; box-shadow:0 20px 50px rgba(0,0,0,.25);}
+  .login-gate-logo{font-size:34px; margin-bottom:6px;}
+  .login-gate-card h2{margin:0 0 8px; font-size:18px;}
+  .login-gate-card p{margin:0 0 18px; font-size:13.5px; color:var(--muted); line-height:1.6;}
+  /* 내 계정 선택 */
+  .acct-dialog{width:min(520px,100%);}
+  .acct-list{display:flex; flex-direction:column; gap:8px; margin:6px 0 12px;}
+  .acct-opt{display:flex; align-items:center; gap:10px; text-align:left; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--paper); color:var(--ink); font:inherit; font-size:13.5px; cursor:pointer;}
+  .acct-opt:hover{border-color:var(--primary); background:var(--primary-tint);}
+  .acct-opt:focus-visible{outline:2px solid var(--primary); outline-offset:2px;}
+  .acct-opt:disabled{opacity:.6; cursor:default;}
+  /* 사이드바의 로그인 사용자 표시 */
+  .cur-user-who{flex:1; min-width:0; text-align:left; padding:6px 8px; border:1px solid var(--border); border-radius:8px; background:transparent; color:inherit; font:inherit; font-size:12.5px; font-weight:600; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .cur-user-who:hover{border-color:var(--primary);}
+  /* GUEST(조회만): 수정용 버튼을 숨기고, 저장 시도 시 안내 */
+  body.guest-mode #addTaskBtn, body.guest-mode .advance-btn, body.guest-mode .quick-assign, body.guest-mode #manageUsersBtn{display:none !important;}
+  body.guest-mode .card{cursor:default;}
+  .guest-modal-note{margin:0 0 10px; padding:8px 12px; border-radius:10px; background:var(--accent-tint); color:var(--ink); font-size:12.8px; font-weight:700;}
+  #guestNotice{position:fixed; left:50%; bottom:24px; transform:translate(-50%, 20px); z-index:9600; background:var(--ink); color:var(--surface); padding:10px 16px; border-radius:10px; font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,.3); opacity:0; pointer-events:none; transition:opacity .2s, transform .2s; max-width:calc(100vw - 32px);}
+  #guestNotice.show{opacity:1; transform:translate(-50%, 0);}
   @keyframes saveDotPulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 
   /* ---------- process tab ---------- */
@@ -950,6 +972,9 @@ const BOARD_DEFAULT_API='https://script.google.com/macros/s/AKfycbwxBnE9j7VfeX-v
     const m = /[#&]token=([^&]+)/.exec(location.hash);
     if(!m) return;
     localStorage.setItem('ppe_board_api_token', decodeURIComponent(m[1]));
+    // 회사 계정 확인 페이지가 함께 넘겨준 로그인 이메일 — 이걸로 어느 보드 계정인지 정한다.
+    const em = /[#&]email=([^&]+)/.exec(location.hash);
+    if(em) localStorage.setItem('ppe_board_login_email', decodeURIComponent(em[1]).toLowerCase());
     history.replaceState(null, '', location.pathname + location.search);
   }catch(e){}
 })();
@@ -1152,6 +1177,12 @@ window.storage={mode:'local',
   async get(key,shared){ const value=localStorage.getItem(boardLocalKey(key,shared)); return value===null?null:{key,value}; },
   async set(key,value,shared){
     const text=String(value);
+    if(shared && IS_GUEST && !boardSync.booting){
+      // GUEST는 조회만: 공유 데이터 저장을 막고(이 PC 사본도 그대로 둠) 화면을 저장된 상태로 되돌린다.
+      showGuestNotice_();
+      setTimeout(()=>revertGuestChange_(key), 0);
+      return {key, value:text};
+    }
     localStorage.setItem(boardLocalKey(key,shared), text);
     const name = shared && (/^ppe_tasks_/.test(key)?'tasks':{ppe_activity_log:'activity',ppe_models_v1:'models',ppe_users_v1:'users',ppe_checklists_v1:'checklists'}[key]);
     // 연결 상태와 관계없이 모든 수정은 "보낼 목록"에 들어간다(끊겨 있을 때 쓴 내용도 연결되면 올라가도록).
@@ -1566,7 +1597,7 @@ function resolveConflict_(id, choice){
 const PRESENCE = {session: Math.random().toString(36).slice(2)+Date.now().toString(36), taskId:null, mode:'view', list:[], supported:null, sending:false, again:false};
 function presencePayload_(){
   const u = (typeof currentUser==='function') ? currentUser() : null;
-  return {session:PRESENCE.session, taskId:PRESENCE.taskId, mode:PRESENCE.mode, userId:currentUserId||'', name:u?u.name:'', color:u?u.color:''};
+  return {session:PRESENCE.session, taskId:PRESENCE.taskId, mode:PRESENCE.mode, userId:currentUserId||'', name:u?u.name:(IS_GUEST?'GUEST':''), color:u?u.color:'#8b948f'};
 }
 function setPresence_(taskId, mode){
   if(PRESENCE.taskId===taskId && PRESENCE.mode===mode) return;
@@ -1592,7 +1623,7 @@ function presenceOthersOn_(taskId){
   const byUser = new Map();
   PRESENCE.list.forEach(p=>{
     if(p.t!==taskId || p.s===PRESENCE.session || (p.u && p.u===currentUserId)) return;
-    const key = p.u || p.n || p.s;
+    const key = p.u || p.s; // GUEST(계정 없음)끼리는 한 사람으로 합치지 않는다
     const prev = byUser.get(key);
     if(!prev || (p.m==='edit' && prev.m!=='edit')) byUser.set(key, p);
   });
@@ -1810,6 +1841,11 @@ async function startBoardShared(){
   boardSync.booting=false;
   boardSyncStatus();
   window.addEventListener('online', reconnectNow_);
+  // 로그인(회사 계정 확인)이 안 된 상태로 열면 곧바로 로그인 페이지로 보낸다(5분에 한 번만 — 반복 방지).
+  if(needsLoginGate_()){
+    let last = 0; try{ last = Number(localStorage.getItem('ppe_login_redirect_at')||0); }catch(e){}
+    if(Date.now()-last >= 5*60*1000){ goToLoginPortal_(); return; }
+  }
   await connectBoardShared();
 }
 
@@ -1844,7 +1880,7 @@ async function connectBoardShared(){
     localStorage.setItem(boardLocalKey(MODELS_KEY,true), JSON.stringify(MODELS));
     localStorage.setItem(boardLocalKey(CHECKLISTS_KEY,true), JSON.stringify(CHECKLISTS));
     localStorage.setItem(boardLocalKey(ACTIVITY_KEY,true), JSON.stringify(ACTIVITY_LOG));
-    renderUserSwitcher(); renderCurrent();
+    resolveIdentity_(); renderCurrent();
   }catch(e){
     err = e;
   } finally {
@@ -2592,7 +2628,102 @@ function currentUser(){
 }
 function currentUserLabel(){
   const u = currentUser();
-  return u ? (u.role ? `${u.name} (${u.role})` : u.name) : '미지정';
+  return u ? (u.role ? `${u.name} (${u.role})` : u.name) : (IS_GUEST ? 'GUEST' : '미지정');
+}
+
+// ---- 로그인 계정 ----
+// 회사 구글 계정으로 로그인하면(확인 페이지가 이메일을 넘겨줌) 그 이메일에 연결된 보드 계정으로 들어간다.
+// 연결된 계정이 없으면 본인이 기존 계정 중 하나를 골라 연결(관리자는 팀원 관리에서 바꿀 수 있음)하거나
+// GUEST로 조회만 한다. GUEST 제한은 화면에서만 한다(사용자 결정, 2026-09-30).
+const LOGIN_EMAIL_KEY = 'ppe_board_login_email';
+let IS_GUEST = false;
+function loginEmail_(){ try{ return (localStorage.getItem(LOGIN_EMAIL_KEY)||'').toLowerCase(); }catch(e){ return ''; } }
+function linkedUserFor_(email){ return email ? (USERS.find(u=>(u.googleEmail||'').toLowerCase()===email) || null) : null; }
+function needsLoginGate_(){ return !!TOKEN_PORTAL_URL && (!boardSync.token || !loginEmail_()); }
+function resolveIdentity_(){
+  const email = loginEmail_();
+  const linked = linkedUserFor_(email);
+  currentUserId = linked ? linked.id : null;
+  IS_GUEST = !linked;
+  document.body.classList.toggle('guest-mode', IS_GUEST);
+  renderLoginGate_();
+  renderUserSwitcher();
+  applyMenuPermissions();
+  // 계정 선택은 서버의 최신 팀원 목록을 받은 뒤에만 띄운다(오래된 목록으로 연결하면 서버 목록을 덮어쓸 수 있음).
+  let skipped = false; try{ skipped = sessionStorage.getItem('ppe_guest_chosen')===email; }catch(e){}
+  if(!linked && email && boardSync.everConnected && !needsLoginGate_() && !skipped) openAccountPicker_();
+}
+function renderLoginGate_(){
+  let g = document.getElementById('loginGate');
+  if(!needsLoginGate_()){ if(g) g.remove(); return; }
+  if(!g){
+    g = document.createElement('div'); g.id = 'loginGate'; g.setAttribute('role','dialog'); g.setAttribute('aria-modal','true');
+    g.innerHTML = `<div class="login-gate-card"><div class="login-gate-logo">📋</div><h2>생산기술팀 업무 프로세스 보드</h2>
+      <p>회사 구글 계정(@intelliantech.com)으로 로그인해야 볼 수 있습니다.</p>
+      <button type="button" class="btn" id="loginGateBtn">🏢 회사 계정으로 로그인</button></div>`;
+    document.body.appendChild(g);
+    g.querySelector('#loginGateBtn').addEventListener('click', goToLoginPortal_);
+  }
+}
+function openAccountPicker_(){
+  if(document.getElementById('acctPicker')) return;
+  const email = loginEmail_();
+  const free = USERS.filter(u=>!u.googleEmail);
+  const wrap = document.createElement('div'); wrap.id = 'acctPicker'; wrap.className = 'cf-backdrop';
+  wrap.innerHTML = `<div class="cf-dialog acct-dialog" role="dialog" aria-modal="true" aria-labelledby="acctTitle">
+      <h3 id="acctTitle">내 계정 선택</h3>
+      <p class="cf-sub"><b>${escapeHtml(email)}</b>(으)로 로그인했습니다. 보드에서 쓸 <b>본인 계정</b>을 골라 주세요. 한 번 고르면 다음부터는 자동으로 이 계정으로 들어갑니다.</p>
+      <div class="acct-list">${free.length ? free.map(u=>`<button type="button" class="acct-opt" data-id="${u.id}">${avatarHtml(u,28)}<span><b>${escapeHtml(u.name)}</b>${u.role?` <span class="muted-cell">· ${escapeHtml(u.role)}</span>`:''}${u.isAdmin?' <span class="muted-cell">· 관리자</span>':''}</span></button>`).join('')
+        : '<p class="cf-sub">연결할 수 있는 계정이 없습니다. 관리자에게 계정 추가나 연결을 요청해 주세요.</p>'}</div>
+      <div class="cf-actions"><span class="cf-hint" id="acctMsg">목록에 본인 계정이 없으면 GUEST로 보면서 관리자에게 요청하세요.</span><button type="button" class="btn btn-ghost" id="acctGuest">GUEST로 보기 (조회만)</button></div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const msg = wrap.querySelector('#acctMsg');
+  wrap.querySelector('#acctGuest').addEventListener('click', ()=>{
+    try{ sessionStorage.setItem('ppe_guest_chosen', email); }catch(e){}
+    wrap.remove();
+  });
+  wrap.querySelectorAll('.acct-opt').forEach(b=>b.addEventListener('click', async ()=>{
+    const u0 = USERS.find(u=>u.id===b.dataset.id);
+    if(!u0 || !confirm(`"${u0.name}" 계정을 ${email} 에 연결할까요?\n한 번 연결하면 이후 변경은 관리자만 할 수 있습니다.`)) return;
+    wrap.querySelectorAll('button').forEach(x=>x.disabled=true);
+    msg.textContent = '연결하는 중…';
+    try{
+      // 그사이 다른 사람이 같은 계정을 골랐을 수 있으므로 서버의 최신 팀원 목록으로 다시 확인한 뒤 연결한다.
+      const cfg = await boardRequest('boardGetConfig');
+      if(Array.isArray(cfg.users) && cfg.users.length) USERS = cfg.users;
+      const target = USERS.find(u=>u.id===u0.id);
+      if(!target || (target.googleEmail && target.googleEmail.toLowerCase()!==email)){
+        wrap.remove(); alert('방금 다른 사람이 이 계정을 연결했습니다. 다시 골라 주세요.'); resolveIdentity_(); return;
+      }
+      target.googleEmail = email;
+      currentUserId = target.id; IS_GUEST = false;
+      await persistUsers();
+      wrap.remove();
+      resolveIdentity_(); renderCurrent();
+    }catch(e){
+      msg.textContent = '연결하지 못했습니다(서버 응답 없음). 잠시 뒤 다시 시도해 주세요.';
+      wrap.querySelectorAll('button').forEach(x=>x.disabled=false);
+    }
+  }));
+}
+// GUEST가 무언가 저장하려 하면 막고 알려준 뒤 화면을 원래대로 되돌린다(화면에서만 막는 방식의 안전망).
+let guestNoticeTimer = null;
+function showGuestNotice_(){
+  let el = document.getElementById('guestNotice');
+  if(!el){ el = document.createElement('div'); el.id='guestNotice'; el.setAttribute('role','status'); document.body.appendChild(el); }
+  el.textContent = 'GUEST는 조회만 가능합니다. 수정하려면 왼쪽 아래에서 내 계정을 연결해 주세요.';
+  el.classList.add('show');
+  clearTimeout(guestNoticeTimer); guestNoticeTimer = setTimeout(()=>el.classList.remove('show'), 3500);
+}
+function revertGuestChange_(key){
+  const read = k=>{ try{ return JSON.parse(localStorage.getItem(boardLocalKey(k,true))||'null'); }catch(e){ return null; } };
+  if(key===STORAGE_KEY){ const v=read(STORAGE_KEY); if(Array.isArray(v)) TASKS=v; }
+  else if(key===USERS_KEY){ const v=read(USERS_KEY); if(Array.isArray(v)) USERS=v; }
+  else if(key===MODELS_KEY){ const v=read(MODELS_KEY); if(Array.isArray(v)) MODELS=v; }
+  else if(key===CHECKLISTS_KEY){ const v=read(CHECKLISTS_KEY); if(v) CHECKLISTS=v; }
+  else if(key===ACTIVITY_KEY){ const v=read(ACTIVITY_KEY); if(Array.isArray(v)) ACTIVITY_LOG=v; }
+  renderCurrent();
 }
 function userById(id){
   return USERS.find(u=>u.id===id) || null;
@@ -2616,18 +2747,30 @@ function renderUserSwitcher(){
   const sel = document.getElementById('userSelect');
   const avatar = document.getElementById('curUserAvatar');
   if(!sel) return;
+  // 로그인한 구글 계정이 곧 사용자이므로 드롭다운으로 다른 사람을 고를 수 없다 — 이름만 보여준다.
+  sel.style.display = 'none';
+  let who = document.getElementById('curUserWho');
+  if(!who){
+    who = document.createElement('button'); who.type='button'; who.id='curUserWho'; who.className='cur-user-who';
+    sel.after(who);
+    who.addEventListener('click', ()=>{ if(IS_GUEST && loginEmail_()){ try{ sessionStorage.removeItem('ppe_guest_chosen'); }catch(e){} openAccountPicker_(); } else if(currentUser()) openUserManager(); });
+  }
+  const me = currentUser(), email = loginEmail_();
+  who.textContent = me ? me.name : (email ? 'GUEST · 조회만 — 내 계정 연결' : '로그인 필요');
+  who.title = email ? `${email}${me?' 로 로그인됨 · 눌러서 내 이름·색상 변경':' · 눌러서 내 계정 연결'}` : '';
+  const mgr = document.getElementById('manageUsersBtn');
+  if(mgr){ mgr.style.display = me ? '' : 'none'; mgr.textContent = (me && me.isAdmin) ? '+ 팀원 관리' : '내 이름·색상 변경'; }
   sel.innerHTML = USERS.map(u=>`<option value="${u.id}" ${u.id===currentUserId?'selected':''} style="color:${u.color}" title="${escapeHtml(u.name)}${u.role? ' · '+escapeHtml(u.role):''}">${escapeHtml(u.name)}</option>`).join('');
   const u = currentUser();
   avatar.textContent = u ? initials(u.name) : '?';
   avatar.style.background = u ? u.color : 'var(--primary)';
   avatar.title = u ? (u.role? `${u.name} · ${u.role}` : u.name) : '';
 }
-document.getElementById('userSelect')?.addEventListener('change', e=> setCurrentUser(e.target.value));
 document.getElementById('manageUsersBtn')?.addEventListener('click', openUserManager);
 
 function labelFor(name, role){ return role ? `${name} (${role})` : name; }
 
-async function updateUser(id, {name, role, color, isAdmin, permissions, handle}){
+async function updateUser(id, {name, role, color, isAdmin, permissions, handle, googleEmail}){
   const u = USERS.find(x=>x.id===id);
   if(!u) return;
   const oldName = u.name;
@@ -2642,6 +2785,7 @@ async function updateUser(id, {name, role, color, isAdmin, permissions, handle})
   if(isAdmin !== undefined) u.isAdmin = isAdmin;
   if(permissions !== undefined) u.permissions = permissions;
   if(handle !== undefined) u.handle = handle || slugHandle(name) || id;
+  if(googleEmail !== undefined){ if(googleEmail) u.googleEmail = googleEmail; else delete u.googleEmail; }
   await persistUsers();
 
   let touched = false;
@@ -2693,6 +2837,10 @@ function openUserManager(){
                 </div>
                 ${iAmAdmin ? `
                 <div style="border-top:1px dashed var(--border); padding-top:8px;">
+                  <div class="field" style="margin-bottom:8px;">
+                    <label>연결된 구글 계정 (회사 이메일 — 이 이메일로 로그인한 사람이 이 계정으로 들어옴, 비우면 연결 해제)</label>
+                    <input type="email" id="editEmail_${u.id}" value="${escapeHtml(u.googleEmail||'')}" placeholder="예: hong@intelliantech.com">
+                  </div>
                   <label style="display:flex; align-items:center; gap:6px; font-size:12.5px; margin-bottom:6px;">
                     <input type="checkbox" id="editAdmin_${u.id}" ${u.isAdmin?'checked':''} style="width:auto;">
                     관리자 (모든 메뉴 자동 허용)
@@ -2717,15 +2865,16 @@ function openUserManager(){
               <span style="display:flex; align-items:center; gap:8px; font-size:13px;">
                 <span class="avatar" style="background:${u.color}22; color:${u.color}">${initials(u.name)}</span>${escapeHtml(u.name)}${u.role? ` <span class="muted-cell">· ${escapeHtml(u.role)}</span>`:''}${u.isAdmin? ` <span class="muted-cell">· 관리자</span>`:''}${u.handle? ` <span class="muted-cell">· @${escapeHtml(u.handle)}</span>`:''}
               </span>
-              <span style="display:flex; gap:4px;">
-                <button class="closebtn editUserBtn" data-id="${u.id}" title="수정">✎</button>
-                <button class="closebtn removeUserBtn" data-id="${u.id}" title="삭제">✕</button>
+              <span style="display:flex; gap:4px; align-items:center;">
+                ${iAmAdmin ? `<span class="muted-cell" style="font-size:11.5px; margin-right:6px;">${u.googleEmail ? escapeHtml(u.googleEmail) : '구글 계정 미연결'}</span>` : ''}
+                ${(iAmAdmin || u.id===currentUserId) ? `<button class="closebtn editUserBtn" data-id="${u.id}" title="수정">✎</button>` : ''}
+                ${iAmAdmin ? `<button class="closebtn removeUserBtn" data-id="${u.id}" title="삭제">✕</button>` : ''}
               </span>
             </div>
           `;
         }).join('') || `<div class="comment-empty">등록된 팀원이 없습니다.</div>`}
       </div>
-      <div class="form-grid">
+      ${isBoardAdmin_() ? `<div class="form-grid">
         <div style="grid-column:span 1; max-width:70px;">
           <label>색상</label>
           <input type="color" id="newUserColor" value="${nextPaletteColor()}" style="width:38px; height:32px; padding:2px; border:1px solid var(--border); border-radius:7px; cursor:pointer;">
@@ -2743,7 +2892,7 @@ function openUserManager(){
     <div class="modal-foot">
       <span class="save-hint">이름만 입력해도 추가됩니다.</span>
       <button class="btn" id="addUserBtn">팀원 추가</button>
-    </div>
+    </div>` : `</div>`}
   `;
 
   function bindHandlers(){
@@ -2763,12 +2912,17 @@ function openUserManager(){
         const color = document.getElementById('editColor_'+id).value;
         const handle = document.getElementById('editHandle_'+id).value.trim().toLowerCase().replace(/\s+/g,'').replace(/^@/,'');
         const iAmAdmin = !!(currentUser() && currentUser().isAdmin);
-        let isAdmin, permissions;
+        let isAdmin, permissions, googleEmail;
         if(iAmAdmin){
           isAdmin = document.getElementById('editAdmin_'+id).checked;
           permissions = Array.from(modal.querySelectorAll('.editPerm_'+id+':checked')).map(cb=>cb.value);
+          googleEmail = document.getElementById('editEmail_'+id).value.trim().toLowerCase();
+          const dup = googleEmail && USERS.find(x=>x.id!==id && (x.googleEmail||'').toLowerCase()===googleEmail);
+          if(dup){ alert(`${googleEmail} 은(는) 이미 "${dup.name}" 계정에 연결되어 있습니다. 먼저 그쪽 연결을 해제해 주세요.`); return; }
+          if(id===currentUserId && googleEmail!==loginEmail_() && !confirm('지금 로그인한 본인 계정의 연결을 바꾸면 저장 후 GUEST가 됩니다. 계속할까요?')) return;
         }
-        await updateUser(id, {name, role, color, isAdmin, permissions, handle});
+        await updateUser(id, {name, role, color, isAdmin, permissions, handle, googleEmail});
+        resolveIdentity_();
         editingId = null;
         renderUserSwitcher();
         applyMenuPermissions();
@@ -2782,12 +2936,12 @@ function openUserManager(){
         if(USERS.length <= 1){ alert('최소 한 명은 남아 있어야 합니다.'); return; }
         USERS = USERS.filter(u=>u.id!==id);
         await persistUsers();
-        if(currentUserId===id) await setCurrentUser(USERS[0].id);
+        resolveIdentity_();
         renderUserSwitcher();
         redraw();
       });
     });
-    document.getElementById('addUserBtn').addEventListener('click', async ()=>{
+    document.getElementById('addUserBtn')?.addEventListener('click', async ()=>{
       const name = document.getElementById('newUserName').value.trim();
       if(!name){ alert('이름을 입력해 주십시오.'); return; }
       const role = document.getElementById('newUserRole').value.trim();
@@ -5357,6 +5511,13 @@ function openDetail(id){
     }
     if(e.key==='Enter'){ e.preventDefault(); submitComment(); }
   });
+  if(IS_GUEST){
+    // GUEST는 조회만 — 입력칸·버튼을 모두 잠그고(닫기와 링크는 그대로) 위에 안내를 띄운다.
+    modal.querySelectorAll('input,select,textarea,button').forEach(el=>{ if(!el.closest('.modal-x')) el.disabled = true; });
+    modal.querySelectorAll('[contenteditable="true"]').forEach(el=>el.setAttribute('contenteditable','false'));
+    const note = document.createElement('div'); note.className = 'guest-modal-note'; note.textContent = 'GUEST — 조회만 가능합니다';
+    modal.prepend(note);
+  }
   // 접속 표시: 이 카드를 연 것을 알리고(편집 중이던 같은 카드를 다시 그린 경우는 편집 중 유지), 다른 사람 표시를 그린다.
   setPresence_(id, PRESENCE.taskId===id ? PRESENCE.mode : 'view');
   renderPresenceInModal_();
@@ -6441,7 +6602,7 @@ renderNotifyToggleBtn();
 /* ================= INIT ================= */
 (async function init(){
   await loadUsers();
-  renderUserSwitcher();
+  resolveIdentity_();
   applyMenuPermissions();
   await loadMyOnlyPref();
   await loadLastViewed();
