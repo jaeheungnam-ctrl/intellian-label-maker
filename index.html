@@ -145,11 +145,6 @@
     width:24px; height:24px; border-radius:50%; background:var(--primary); color:#fff;
     font-size:10px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto;
   }
-  .user-select{
-    flex:1; min-width:0; background:var(--paper); color:var(--ink); border:1px solid var(--border); border-radius:7px;
-    padding:6px 6px; font-size:11.5px; font-family:inherit; cursor:pointer; text-overflow:ellipsis;
-  }
-  .user-select:focus{outline:none; border-color:var(--primary);}
   .sync{font-size:11px; color:var(--muted-2); display:flex; align-items:center; gap:6px; padding:6px 10px;}
   .sync .led{width:6px; height:6px; border-radius:50%; background:var(--primary);}
   .sync.saving .led{background:var(--accent);}
@@ -919,7 +914,7 @@
         <div class="user-box-label">현재 작업자</div>
         <div class="user-row">
           <span class="user-avatar" id="curUserAvatar">?</span>
-          <select class="user-select" id="userSelect"></select>
+          <button type="button" class="cur-user-who" id="curUserWho"></button>
         </div>
         <button class="resetbtn" id="manageUsersBtn">+ 팀원 관리</button>
       </div>
@@ -985,8 +980,8 @@ const BOARD_DEFAULT_API='https://script.google.com/macros/s/AKfycbwxBnE9j7VfeX-v
 const boardSync={
   url:localStorage.getItem('ppe_board_api_url')||BOARD_DEFAULT_API,
   token:localStorage.getItem('ppe_board_api_token')||'',
-  error:'', pending:0, dirty:false, lastSavedAt:null,
-  loading:true, booting:true, sending:false, fetching:false,
+  error:'', pending:0, lastSavedAt:null,
+  triedOnce:false, booting:true, sending:false, fetching:false,
   timer:null, version:1, revision:null, editVersion:0,
   // 카드별 서버 상태 추적: id -> updatedAt (충돌 감지용 baseUpdatedAt으로 사용)
   taskUpdatedAt:new Map(),
@@ -1043,16 +1038,10 @@ function saveBaselines_(){
 }
 function loadBaselines_(){
   try{
-    const raw = localStorage.getItem(BOARD_BASELINES_KEY);
-    if(raw){
-      Object.entries(JSON.parse(raw)).forEach(([id,v])=>{
-        boardSync.taskServerSnapshot.set(id, v.s);
-        if(v.at!=null) boardSync.taskUpdatedAt.set(id, v.at);
-      });
-      return;
-    }
-    const old = localStorage.getItem('ppe_board_task_baselines'); // 예전 형식(updatedAt 없음)
-    if(old) Object.entries(JSON.parse(old)).forEach(([id,s])=> boardSync.taskServerSnapshot.set(id, s));
+    Object.entries(JSON.parse(localStorage.getItem(BOARD_BASELINES_KEY)||'{}')).forEach(([id,v])=>{
+      boardSync.taskServerSnapshot.set(id, v.s);
+      if(v.at!=null) boardSync.taskUpdatedAt.set(id, v.at);
+    });
   }catch(e){}
 }
 // 왜 끊겼는지 나중에 확인할 수 있도록 실패 기록을 최근 100건까지 남긴다(설정 > 🩺 연결 진단에서 보임).
@@ -1179,7 +1168,7 @@ function queueBoardSave(name, text){
   boardSyncStatus();
 }
 
-window.storage={mode:'local',
+window.storage={
   async get(key,shared){ const value=localStorage.getItem(boardLocalKey(key,shared)); return value===null?null:{key,value}; },
   async set(key,value,shared){
     const text=String(value);
@@ -1229,7 +1218,6 @@ async function pushOneTask(id){
     const {merged, conflicts} = mergeTask3_(base, mine, server);
     if(conflicts.length){
       boardSync.conflicts.set(id, {base, mine, server, merged, keys:conflicts, serverUpdatedAt:r.serverTask._updatedAt, serverBy:r.serverTask._updatedBy});
-      if(!conflictQueue_.includes(id)) conflictQueue_.push(id);
       openConflictDialog_();
       return; // 보낼 목록에는 그대로 남아 있음
     }
@@ -1322,10 +1310,9 @@ async function flushBoardSaves(){
   boardSync.sending=false;
   saveBaselines_();
   savePendingStore_();
-  boardSync.dirty = boardSync.taskRetry.size>0;
   if(!boardSync.pending) boardSync.lastSavedAt = Date.now();
   if(networkError) markDisconnected_(networkError);
-  else if(!boardSync.dirty) boardSync.error='';
+  else if(!boardSync.taskRetry.size) boardSync.error='';
   boardSyncStatus();
   if(boardSync.connected){
     const ready = [...boardSync.pendingTasks.keys()].some(id=>!boardSync.taskRetry.has(id) && !boardSync.conflicts.has(id))
@@ -1355,7 +1342,6 @@ function markDisconnected_(err){
 function scheduleReconnect_(forceDelay){
   if(boardSync.reconnectTimer || boardSync.connecting || boardSync.connected) return;
   const d = forceDelay || boardSync.reconnectDelay;
-  boardSync.nextReconnectAt = Date.now()+d;
   boardSync.reconnectTimer = setTimeout(()=>{ boardSync.reconnectTimer=null; connectBoardShared(); }, d);
   if(!forceDelay) boardSync.reconnectDelay = Math.min(boardSync.reconnectDelay+1000, 5000);
 }
@@ -1365,28 +1351,29 @@ function reconnectNow_(){
   connectBoardShared();
 }
 
-function syncSettingsStateHtml_(){
-  const state = boardSync.authBannerOn ? '로그인이 필요합니다 — 오른쪽 위 [회사 계정으로 로그인]을 눌러 주세요'
-    : boardSync.connected ? '공유 서버 연결됨'
-    : (boardSync.everConnected || !boardSync.loading) ? '공유 연결 끊김 — 자동 재연결 중(수정 내용은 이 PC에 보관 후 연결되면 자동 저장)'
-    : '연결 확인 중…';
-  const err = (!boardSync.connected && boardSync.error && !boardSync.authBannerOn) ? `<br><span style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</span>` : '';
-  return `<b>${state}</b>${boardSync.pending?` · 보낼 목록 ${boardSync.pending}건`:''}${err}`;
+// 연결·저장 상태를 한 번만 판정해서 설정 화면·사이드바·상단(항상 보이는 저장 상태) 세 곳이 같은 문구로 보여 준다.
+function syncState_(){
+  const n = boardSync.pending, keep = n ? ` · 보낼 목록 ${n}건 이 PC에 보관 중` : '';
+  const title = id=>{ const t=TASKS.find(x=>x.id===id); return t ? (t.title||id) : id; };
+  const names = ()=>[...boardSync.pendingTasks.keys()].map(title);
+  if(boardSync.authBannerOn) return {cls:'error', text:'로그인이 필요합니다'+keep, tip:'회사 구글 계정으로 로그인하면 자동으로 연결됩니다.'};
+  if(!boardSync.connected && boardSync.triedOnce) return {cls:'error', text:'공유 연결 끊김 · 자동 재연결 중'+keep, tip:[boardSync.error, ...names()].filter(Boolean).join('\n')};
+  if(!boardSync.connected) return {cls:'', text:'연결 확인 중…', tip:''};
+  if(boardSync.taskRetry.size) return {cls:'error', text:`카드 ${boardSync.taskRetry.size}건 저장 재시도 중 · 이 PC엔 보존됨`, tip:[...boardSync.taskRetry].map(([id,r])=>title(id)+' — '+r.msg).join('\n')};
+  if(n){ const list = names(); return {cls:'pending', text:`저장 중… (${n}건 대기${list.length?' — '+list.slice(0,3).join(', ')+(list.length>3?' 외':''):''})`, tip:list.join('\n')}; }
+  return {cls:'', text: boardSync.lastSavedAt ? `최근 저장됨 (${formatSavedAt(boardSync.lastSavedAt)})` : 'Google Sheets 공유 연결됨', tip:''};
 }
 function boardSyncStatus(){
   boardSync.pending = pendingCount_();
-  { const s=document.getElementById('syncSettingsState'); if(s) s.innerHTML = syncSettingsStateHtml_(); }
-  const el=document.getElementById('syncText');
-  if(el){
-    el.textContent = boardSync.authBannerOn ? '로그인 필요 · 수정 내용은 이 PC에 보관'
-      : !boardSync.connected
-        ? (boardSync.everConnected || !boardSync.loading ? `공유 연결 끊김 · 재연결 중 · 보낼 목록 ${boardSync.pending}건 이 PC에 보관` : 'PC 데이터 표시 중 · 공유 연결 확인 중')
-      : boardSync.dirty ? `일부 카드 저장 재시도 중 (${boardSync.taskRetry.size}건)`
-      : boardSync.pending ? '이 PC에 저장됨 · 공유 저장 중'
-      : (boardSync.error?'공유 서버 연결 확인 필요':'Google Sheets 공유 연결됨');
-    el.title=boardSync.error||'';
-  }
-  renderSaveStatusTop();
+  const s = syncState_();
+  const settings = document.getElementById('syncSettingsState');
+  if(settings) settings.innerHTML = `<b>${escapeHtml(s.text)}</b>` + (s.cls==='error' && boardSync.error && !boardSync.authBannerOn ? `<br><span style="color:var(--s-delay);overflow-wrap:anywhere">${escapeHtml(boardSync.error)}</span>` : '');
+  const side = document.getElementById('syncText');
+  if(side){ side.textContent = s.text; side.title = s.tip; }
+  const wrap = document.getElementById('saveStatusTop'), txt = document.getElementById('saveStatusTopText');
+  if(wrap && txt){ wrap.classList.remove('pending','error'); if(s.cls) wrap.classList.add(s.cls); txt.textContent = s.text; wrap.title = s.tip; }
+  const loginBtn = document.getElementById('loginTopBtn');
+  if(loginBtn) loginBtn.hidden = !(boardSync.authBannerOn && TOKEN_PORTAL_URL);
 }
 
 // ---- 동시 수정 자동 병합 ----
@@ -1396,12 +1383,16 @@ function boardSyncStatus(){
 function eq_(a,b){ return JSON.stringify(a)===JSON.stringify(b); }
 function isPlainObj_(v){ return v!==null && typeof v==='object' && !Array.isArray(v); }
 function splitNoteBlocks_(html){ return String(html||'').split(/(?<=<br\s*\/?>|<\/div>|<\/p>|<\/li>|\n)/i); }
+function lcsTable_(x, y){
+  const n=x.length, m=y.length, dp=Array.from({length:n+1},()=>new Uint32Array(m+1));
+  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--) dp[i][j] = x[i]===y[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  return dp;
+}
 // 줄 단위 3-way 병합(diff3). 양쪽이 같은 자리를 서로 다르게 바꿨으면 null.
 function diff3Lines_(base, a, b){
   if((base.length+1)*(a.length+1) > 4e6 || (base.length+1)*(b.length+1) > 4e6) return null;
   const match = (x, y)=>{
-    const n=x.length, m=y.length, dp=Array.from({length:n+1},()=>new Uint32Array(m+1));
-    for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--) dp[i][j] = x[i]===y[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+    const n=x.length, m=y.length, dp=lcsTable_(x, y);
     const map = new Array(n).fill(-1); let i=0, j=0;
     while(i<n && j<m){ if(x[i]===y[j]){ map[i]=j; i++; j++; } else if(dp[i+1][j]>=dp[i][j+1]) i++; else j++; }
     return map;
@@ -1510,8 +1501,7 @@ function diffHighlight_(a, b){
     const all = s=>`<mark class="cf-diff">${escapeHtml(s)}</mark>`;
     return [all(a), all(b)];
   }
-  const n=x.length, m=y.length, dp=Array.from({length:n+1},()=>new Uint32Array(m+1));
-  for(let i=n-1;i>=0;i--) for(let j=m-1;j>=0;j--) dp[i][j] = x[i]===y[j] ? dp[i+1][j+1]+1 : Math.max(dp[i+1][j], dp[i][j+1]);
+  const n=x.length, m=y.length, dp=lcsTable_(x, y);
   let i=0, j=0; const ra=[], rb=[];
   const push=(arr, s, diff)=>{ const last=arr[arr.length-1]; if(last && last.d===diff) last.s+=s; else arr.push({s, d:diff}); };
   while(i<n || j<m){
@@ -1522,12 +1512,9 @@ function diffHighlight_(a, b){
   const html = arr=>arr.map(p=>p.d ? `<mark class="cf-diff">${escapeHtml(p.s)}</mark>` : escapeHtml(p.s)).join('');
   return [html(ra), html(rb)];
 }
-const conflictQueue_ = [];
 function openConflictDialog_(){
-  if(document.getElementById('conflictDialog') || !conflictQueue_.length) return;
-  const id = conflictQueue_[0];
-  const c = boardSync.conflicts.get(id);
-  if(!c){ conflictQueue_.shift(); return openConflictDialog_(); }
+  if(document.getElementById('conflictDialog') || !boardSync.conflicts.size) return;
+  const [id, c] = boardSync.conflicts.entries().next().value; // Map은 들어온 순서를 지키므로 먼저 생긴 충돌부터
   const who = c.serverBy || '다른 사람';
   const autoCount = Object.keys(c.merged).filter(k=>k!=='id' && !c.keys.includes(k) && !eq_(c.merged[k], c.mine[k])).length;
   const choice = {};
@@ -1563,7 +1550,7 @@ function openConflictDialog_(){
   };
   wrap.querySelectorAll('.cf-opt').forEach(o=>o.addEventListener('click', ()=>{ choice[o.closest('.cf-field').dataset.key]=o.dataset.side; refresh(); }));
   wrap.querySelectorAll('[data-all]').forEach(b=>b.addEventListener('click', ()=>{ c.keys.forEach(k=>choice[k]=b.dataset.all); refresh(); }));
-  save.addEventListener('click', ()=>{ resolveConflict_(id, choice); wrap.remove(); conflictQueue_.shift(); openConflictDialog_(); });
+  save.addEventListener('click', ()=>{ resolveConflict_(id, choice); wrap.remove(); openConflictDialog_(); });
   refresh();
   setTimeout(()=>{ const first=wrap.querySelector('.cf-opt'); if(first) first.focus(); }, 0);
 }
@@ -1686,51 +1673,6 @@ function formatSavedAt(ts){
   const p = n => String(n).padStart(2,'0');
   return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
-// 구글 문서처럼, 지금 어떤 화면에 있든 상단에 항상 저장 상태가 보이게 한다.
-// 재흥님 제보: "닫을 때 저장 안 된 내용이 사라질 수 있다"는 경고가 뜨는데 뭐가 안 된 건지
-// 알 방법이 없었음 — 여기서 저장 대기 중인 건수와 마지막 저장 시각을 항상 보여준다.
-function renderSaveStatusTop(){
-  const wrap = document.getElementById('saveStatusTop');
-  const txt = document.getElementById('saveStatusTopText');
-  if(!wrap || !txt) return;
-  wrap.classList.remove('pending','error');
-  const loginBtn = document.getElementById('loginTopBtn');
-  if(loginBtn){
-    if(!loginBtn.dataset.wired){ loginBtn.dataset.wired='1'; loginBtn.addEventListener('click', goToLoginPortal_); }
-    loginBtn.hidden = !(boardSync.authBannerOn && TOKEN_PORTAL_URL);
-  }
-  if(boardSync.authBannerOn){
-    wrap.classList.add('error');
-    txt.textContent = '로그인이 필요합니다' + (boardSync.pending ? ` · 보낼 목록 ${boardSync.pending}건 이 PC에 보관 중(로그인하면 자동 저장)` : '');
-    wrap.title = '회사 구글 계정으로 로그인하면 자동으로 연결됩니다.';
-    return;
-  }
-  const pendingNames = ()=>[...boardSync.pendingTasks.keys()].map(id=>{ const t=TASKS.find(x=>x.id===id); return t ? (t.title||id) : id; });
-  if(!boardSync.connected && (boardSync.everConnected || !boardSync.loading)){
-    wrap.classList.add('error');
-    txt.textContent = `공유 연결 끊김 · 자동 재연결 중` + (boardSync.pending ? ` · 보낼 목록 ${boardSync.pending}건 이 PC에 안전하게 보관 중(연결되면 자동 저장)` : '');
-    wrap.title = (boardSync.error||'') + (boardSync.pending ? '\n\n' + pendingNames().join('\n') : '');
-  } else if(!boardSync.connected){
-    txt.textContent = '연결 확인 중…' + (boardSync.pending ? ` (보낼 목록 ${boardSync.pending}건)` : '');
-    wrap.title = '';
-  } else if(boardSync.dirty){
-    wrap.classList.add('error');
-    const failed = [...boardSync.taskRetry.entries()].map(([id,r])=>{ const t=TASKS.find(x=>x.id===id); return (t?(t.title||id):id)+' — '+r.msg; });
-    txt.textContent = `카드 ${boardSync.taskRetry.size}건 저장 재시도 중 · 이 PC엔 보존됨`;
-    wrap.title = failed.join('\n');
-  } else if(boardSync.pending){
-    wrap.classList.add('pending');
-    const names = pendingNames().filter(Boolean);
-    txt.textContent = `저장 중… (${boardSync.pending}건 대기${names.length? ' — '+names.slice(0,3).join(', ')+(names.length>3?' 외':'') : ''})`;
-    wrap.title = names.join('\n');
-  } else if(boardSync.lastSavedAt){
-    txt.textContent = `최근 저장됨 (${formatSavedAt(boardSync.lastSavedAt)})`;
-    wrap.title = '';
-  } else {
-    txt.textContent = 'Google Sheets 공유 연결됨';
-    wrap.title = '';
-  }
-}
 
 // 서버 목록이 지금 화면의 업무 수에 비해 비정상적으로 적은지(20건 이상 보유 중인데 30% 넘게, 10건 이상 감소).
 function serverTaskDropLooksSuspicious(serverTasks){
@@ -1804,42 +1746,10 @@ function applyServerTasks(serverTasks){
   return true;
 }
 
-// 예전 버전이 남긴 "못 보낸 변경" 백업(카드 전체 스냅샷 방식)을 새 보낼 목록으로 옮긴다 — 이 업데이트가
-// 적용되는 순간 대기 중이던 수정도 잃지 않도록. 실제로 바뀐 항목만 옮긴다.
-function migrateLegacyUnsent_(){
-  try{
-    const raw = localStorage.getItem('ppe_board_unsent:tasks');
-    if(raw){
-      const hasBaselines = boardSync.taskServerSnapshot.size > 0;
-      JSON.parse(raw).forEach(lt=>{
-        if(!lt || !lt.id || boardSync.pendingTasks.has(lt.id)) return;
-        const base = boardSync.taskServerSnapshot.get(lt.id);
-        if(!base && !hasBaselines) return; // 기준값이 전혀 없으면 무엇을 고쳤는지 알 수 없어 옮기지 않는다
-        const keys = diffTaskFields_(base||{}, lt);
-        if(!keys.length) return;
-        const cur = TASKS.find(t=>t.id===lt.id);
-        if(cur) keys.forEach(k=>{ if(k in lt) cur[k]=lt[k]; else delete cur[k]; });
-        else TASKS.push(lt);
-        boardSync.pendingTasks.set(lt.id, {base: base?JSON.parse(JSON.stringify(base)):null, baseUpdatedAt:'unknown'});
-      });
-      localStorage.setItem(boardLocalKey(STORAGE_KEY,true), JSON.stringify(TASKS));
-    }
-    const act = localStorage.getItem('ppe_board_unsent:activity');
-    if(act){ const arr = JSON.parse(act); if(arr.length && !boardSync.outboxActivity.some(a=>a.ts===arr[0].ts)) boardSync.outboxActivity.push(arr[0]); }
-    ['users','models','checklists'].forEach(name=>{
-      const r = localStorage.getItem('ppe_board_unsent:'+name);
-      if(r){ boardSync.outboxConfig = boardSync.outboxConfig || {}; boardSync.outboxConfig[name] = JSON.parse(r); }
-    });
-    ['tasks','activity','users','models','checklists'].forEach(n=>localStorage.removeItem('ppe_board_unsent:'+n));
-    if(localStorage.getItem('ppe_board_task_baselines')){ saveBaselines_(); localStorage.removeItem('ppe_board_task_baselines'); }
-    savePendingStore_();
-  }catch(e){ console.error('이전 백업 옮기기 실패', e); }
-}
 
 async function startBoardShared(){
   loadBaselines_();
   loadPendingStore_();
-  migrateLegacyUnsent_();
   // 이 PC에 있던 화면 데이터를 "마지막으로 알던 상태"로 삼아, 이후 실제로 고친 카드만 보낼 목록에 넣는다.
   // (예전엔 이 기준이 비어 있어서, 서버 연결 전에 카드 하나만 고쳐도 모든 카드를 이 PC의 예전 값으로
   // 서버에 덮어써 그사이 다른 사람이 고친 내용이 되돌아갔다.)
@@ -1848,10 +1758,7 @@ async function startBoardShared(){
   boardSyncStatus();
   window.addEventListener('online', reconnectNow_);
   // 로그인(회사 계정 확인)이 안 된 상태로 열면 곧바로 로그인 페이지로 보낸다(5분에 한 번만 — 반복 방지).
-  if(needsLoginGate_()){
-    let last = 0; try{ last = Number(localStorage.getItem('ppe_login_redirect_at')||0); }catch(e){}
-    if(Date.now()-last >= 5*60*1000){ goToLoginPortal_(); return; }
-  }
+  if(needsLoginGate_() && !recentlyRedirected_()){ goToLoginPortal_(); return; }
   await connectBoardShared();
 }
 
@@ -1868,7 +1775,6 @@ async function connectBoardShared(){
     ]);
     if(!Array.isArray(taskState.tasks)){ const e = Error('서버 업무 응답 형식이 올바르지 않습니다.'); e.network = true; throw e; }
     boardSync.connected = true; boardSync.everConnected = true;
-    window.storage.mode = 'google';
     boardSync.reconnectDelay = 1000;
     boardSync.error = '';
     if(boardSync.authBannerOn) setBoardAuthBanner(false);
@@ -1891,7 +1797,7 @@ async function connectBoardShared(){
     err = e;
   } finally {
     boardSync.connecting = false;
-    boardSync.loading = false;
+    boardSync.triedOnce = true;
   }
   if(err){ markDisconnected_(err); return; }
   boardSyncStatus();
@@ -1917,9 +1823,10 @@ var TOKEN_PORTAL_URL = 'https://script.google.com/a/macros/intelliantech.com/s/A
 // 사용자는 토큰을 보거나 입력하지 않는다 — 회사 구글 계정 확인 페이지가 토큰을 대신 넘겨준다.
 function setBoardAuthBanner(on){
   boardSync.authBannerOn = !!on;
-  renderSaveStatusTop();
+  boardSyncStatus();
   if(on) maybeAutoLogin_();
 }
+document.getElementById('loginTopBtn')?.addEventListener('click', ()=>goToLoginPortal_());
 function goToLoginPortal_(){
   if(!TOKEN_PORTAL_URL) return;
   try{ localStorage.setItem('ppe_login_redirect_at', String(Date.now())); }catch(e){}
@@ -1930,19 +1837,20 @@ function goToLoginPortal_(){
 // 보여 준다. 로그인 페이지에서 돌아왔는데도 실패하면 무한 반복하지 않도록 5분에 한 번만 자동 이동한다.
 function maybeAutoLogin_(){
   if(!TOKEN_PORTAL_URL || boardSync.everConnected || boardSync.editVersion>0) return;
-  if(document.getElementById('overlay').classList.contains('open')) return;
-  let last = 0; try{ last = Number(localStorage.getItem('ppe_login_redirect_at')||0); }catch(e){}
-  if(Date.now()-last < 5*60*1000) return;
+  if(document.getElementById('overlay').classList.contains('open') || recentlyRedirected_()) return;
   goToLoginPortal_();
 }
-function isBoardAdmin_(){ const u = (typeof currentUser==='function') ? currentUser() : null; return !!(u && u.isAdmin); }
+function recentlyRedirected_(){
+  let last = 0; try{ last = Number(localStorage.getItem('ppe_login_redirect_at')||0); }catch(e){}
+  return Date.now()-last < 5*60*1000;
+}
+function isBoardAdmin_(){ const u = currentUser(); return !!(u && u.isAdmin); }
 
 async function refreshBoardShared(){
   // 탭이 안 보이는 상태(document.hidden)에서도 폴링은 계속한다 — 그래야 담당자 지정/@멘션 알림이
   // 백그라운드에 있을 때도 뜬다. 화면을 다시 그리는 무거운 작업만 보일 때로 미룬다.
   // 저장 대기 중이어도 받아온다(내 미전송 수정은 applyServerTasks가 서버값 위에 얹어서 보존). 끊긴 상태의 재연결은 별도 루프 담당.
   if(!boardSync.connected) return;
-  if(boardSync.needsRender && !toolbarFocused_() && !document.hidden){ boardSync.needsRender=false; renderCurrent(); }
   if(boardSync.fetching||boardSync.sending) return;
   // 화면에 안 보이는 창(다른 탭·최소화)은 60초에 한 번만 확인한다 — 창마다 10초씩 확인하면 서버 사용량 한도를
   // 금방 넘긴다. 다시 보이면 visibilitychange에서 곧바로 확인한다.
@@ -1958,7 +1866,7 @@ async function refreshBoardShared(){
       catch(e){ if(e.network || e.auth) throw e; if(/unknown action/i.test(e.message||'')) PRESENCE.supported=false; rev = null; }
     }
     if(!rev) rev = await boardRequest('boardRevision');
-    if(rev.revision===boardSync.revision){ if(!boardSync.dirty) boardSync.error=''; return; }
+    if(rev.revision===boardSync.revision){ if(!boardSync.taskRetry.size) boardSync.error=''; return; }
     const taskState = await boardRequest('boardGetTasks');
     // 받아오는 사이 내가 새로 저장했거나 수정했다면 이 응답은 이미 낡았을 수 있다(반영하면 방금 저장한 값이
     // 잠깐 옛값으로 보인다) — 버리고 잠시 뒤 다시 받는다.
@@ -1981,7 +1889,7 @@ async function refreshBoardShared(){
       boardSync.revision=taskState.revision;
       if(!document.hidden) renderAfterServerApply_();
     }
-    if(!boardSync.dirty) boardSync.error='';
+    if(!boardSync.taskRetry.size) boardSync.error='';
   }catch(e){
     if(e.network || e.auth) markDisconnected_(e);
     else boardSync.error=e.message;
@@ -2010,7 +1918,7 @@ function renderSyncSettings(){
   const admin = isBoardAdmin_();
   // 일반 사용자에게는 서버 주소·토큰을 보여주지 않는다(로그인은 오른쪽 위 [회사 계정으로 로그인]). 관리자만 고급 설정으로 확인·변경.
   body.innerHTML=`<div class="panel"><h3>Google Sheets 업무 공유</h3>
-    <p id="syncSettingsState">${syncSettingsStateHtml_()}</p>
+    <p id="syncSettingsState"></p>
     ${TOKEN_PORTAL_URL?`<button class="btn" id="boardLoginAgain">🏢 회사 계정으로 다시 로그인</button>`:''}
     <button class="btn btn-ghost" id="boardExportLocal" style="margin-left:8px">현재 PC 업무 백업</button>
     <button class="btn btn-ghost" id="boardDiagnose" style="margin-left:8px">🩺 연결 진단</button>
@@ -2022,6 +1930,7 @@ function renderSyncSettings(){
     <button class="btn" id="boardConnect">주소·토큰 저장 및 연결 확인</button>
     <p class="dash-note">서버 주소를 바꾸거나 토큰을 교체할 때만 사용합니다. 일반 사용자는 오른쪽 위 [회사 계정으로 로그인]으로 연결됩니다.</p></details>`:''}
     <div id="boardConnectResult" style="margin-top:10px"></div></div>`;
+  boardSyncStatus();
   const againBtn=document.getElementById('boardLoginAgain');
   if(againBtn) againBtn.onclick=goToLoginPortal_;
   const revealBtn=document.getElementById('boardTokenReveal');
@@ -2340,7 +2249,6 @@ let listSort = {key:'due', dir:'asc'}; // 전체 목록 정렬 상태 — 컬럼
 
 const STORAGE_KEY = 'ppe_tasks_todo_03d17f325846';
 const USERS_KEY = 'ppe_users_v1';        // 팀원 목록 — 공유(모두에게 동일)
-const CURRENT_USER_KEY = 'ppe_current_user'; // 지금 이 브라우저에서 누구로 쓰고 있는지 — 개인별(공유 안 함)
 const MODELS_KEY = 'ppe_models_v1';      // MODEL 목록 — 공유
 const CHECKLISTS_KEY = 'ppe_checklists_v1'; // 업무유형별 액션 아이템 정의 — 공유
 
@@ -2598,29 +2506,9 @@ async function loadUsers(){
     if(!u.handle){ u.handle = slugHandle(u.name) || u.id; migrated = true; }
   });
   if(migrated) await persistUsers();
-
-  try{
-    const res2 = await window.storage.get(CURRENT_USER_KEY, false);
-    if(res2 && res2.value && USERS.some(u=>u.id===res2.value)) currentUserId = res2.value;
-    else currentUserId = USERS[0] ? USERS[0].id : null;
-  }catch(e){ currentUserId = USERS[0] ? USERS[0].id : null; }
 }
 async function persistUsers(){
   try{ await window.storage.set(USERS_KEY, JSON.stringify(USERS), true); }catch(e){}
-}
-async function setCurrentUser(id){
-  currentUserId = id;
-  try{ await window.storage.set(CURRENT_USER_KEY, id, false); }catch(e){}
-  await loadActivity();
-  await loadAnnouncements();
-  renderUserSwitcher();
-  applyMenuPermissions();
-  // 지금 보고 있던 화면이 방금 바뀐 사용자에게는 권한이 없는 제한 메뉴면 대시보드로 돌려보낸다.
-  if(RESTRICTED_MENUS[currentView] && !userHasMenuAccess(currentView)){
-    currentView = 'dashboard';
-    document.querySelectorAll('.navbtn').forEach(b=> b.classList.toggle('active', b.dataset.view==='dashboard'));
-  }
-  if(typeof renderCurrent === 'function' && TASKS.length) renderCurrent();
 }
 function assigneeOptions(selected=''){
   const names=[...new Set(USERS.map(u=>u.name))];
@@ -2754,28 +2642,19 @@ function avatarHtml(info, size){
 }
 
 function renderUserSwitcher(){
-  const sel = document.getElementById('userSelect');
-  const avatar = document.getElementById('curUserAvatar');
-  if(!sel) return;
-  // 로그인한 구글 계정이 곧 사용자이므로 드롭다운으로 다른 사람을 고를 수 없다 — 이름만 보여준다.
-  sel.style.display = 'none';
-  let who = document.getElementById('curUserWho');
-  if(!who){
-    who = document.createElement('button'); who.type='button'; who.id='curUserWho'; who.className='cur-user-who';
-    sel.after(who);
-    who.addEventListener('click', ()=>{ if(IS_GUEST && loginEmail_()){ try{ sessionStorage.removeItem('ppe_guest_chosen'); }catch(e){} openAccountPicker_(); } else if(currentUser()) openUserManager(); });
-  }
+  // 로그인한 구글 계정이 곧 사용자라 다른 사람을 고를 수 없다 — 이름만 보여준다.
+  const who = document.getElementById('curUserWho'), avatar = document.getElementById('curUserAvatar');
+  if(!who) return;
   const me = currentUser(), email = loginEmail_();
   who.textContent = me ? me.name : (email ? 'GUEST · 조회만 — 내 계정 연결' : '로그인 필요');
   who.title = email ? `${email}${me?' 로 로그인됨 · 눌러서 내 이름·색상 변경':' · 눌러서 내 계정 연결'}` : '';
   const mgr = document.getElementById('manageUsersBtn');
   if(mgr){ mgr.style.display = me ? '' : 'none'; mgr.textContent = (me && me.isAdmin) ? '+ 팀원 관리' : '내 이름·색상 변경'; }
-  sel.innerHTML = USERS.map(u=>`<option value="${u.id}" ${u.id===currentUserId?'selected':''} style="color:${u.color}" title="${escapeHtml(u.name)}${u.role? ' · '+escapeHtml(u.role):''}">${escapeHtml(u.name)}</option>`).join('');
-  const u = currentUser();
-  avatar.textContent = u ? initials(u.name) : '?';
-  avatar.style.background = u ? u.color : 'var(--primary)';
-  avatar.title = u ? (u.role? `${u.name} · ${u.role}` : u.name) : '';
+  avatar.textContent = me ? initials(me.name) : '?';
+  avatar.style.background = me ? me.color : 'var(--primary)';
+  avatar.title = me ? (me.role? `${me.name} · ${me.role}` : me.name) : '';
 }
+document.getElementById('curUserWho')?.addEventListener('click', ()=>{ if(IS_GUEST && loginEmail_()){ try{ sessionStorage.removeItem('ppe_guest_chosen'); }catch(e){} openAccountPicker_(); } else if(currentUser()) openUserManager(); });
 document.getElementById('manageUsersBtn')?.addEventListener('click', openUserManager);
 
 function labelFor(name, role){ return role ? `${name} (${role})` : name; }
@@ -2823,7 +2702,7 @@ function openUserManager(){
       <p style="font-size:12.5px; color:var(--muted); margin-top:0;">여기서 정한 색상이 작성자·코멘트 표시에 그대로 쓰여서, 색만 보고도 누가 했는지 알 수 있습니다. 이름을 바꾸면 그 사람이 남긴 작성자·코멘트·담당자 기록도 함께 바뀝니다.</p>
       <div class="check-list" id="userList" style="margin-bottom:16px;">
         ${USERS.map(u=>{
-          const iAmAdmin = !!(currentUser() && currentUser().isAdmin);
+          const iAmAdmin = isBoardAdmin_();
           if(u.id === editingId){
             return `
               <div class="user-row" data-id="${u.id}" style="flex-direction:column; align-items:stretch; gap:8px;">
@@ -2921,7 +2800,7 @@ function openUserManager(){
         const role = document.getElementById('editRole_'+id).value.trim();
         const color = document.getElementById('editColor_'+id).value;
         const handle = document.getElementById('editHandle_'+id).value.trim().toLowerCase().replace(/\s+/g,'').replace(/^@/,'');
-        const iAmAdmin = !!(currentUser() && currentUser().isAdmin);
+        const iAmAdmin = isBoardAdmin_();
         let isAdmin, permissions, googleEmail;
         if(iAmAdmin){
           isAdmin = document.getElementById('editAdmin_'+id).checked;
@@ -3013,7 +2892,7 @@ async function persist(silent){
   try{
     await window.storage.set(STORAGE_KEY, JSON.stringify(TASKS), true);
     ind.classList.remove('saving');
-    if(window.storage.mode!=='google') boardSync.lastSavedAt=Date.now(); // 공유 모드면 flushBoardSaves가 실제 서버 저장 성공 시점에 기록
+    if(!boardSync.connected) boardSync.lastSavedAt=Date.now(); // 연결돼 있으면 flushBoardSaves가 실제 서버 저장 성공 시점에 기록
     boardSyncStatus();
   }catch(e){
     ind.classList.remove('saving'); txt.textContent = '이 PC에 백업됨 · 공유 저장 실패'; txt.title=e.message;
