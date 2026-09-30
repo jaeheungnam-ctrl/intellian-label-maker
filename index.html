@@ -469,6 +469,9 @@
   .pres-icon{position:relative; display:inline-flex; border-radius:999px; background:var(--surface);}
   .pres-icon .avatar{margin:0;}
   .pres-icon.pres-edit{box-shadow:0 0 0 2px var(--accent);}
+  /* 누군가 보고 있는 카드: 테두리를 그 사람 색으로(여러 명이면 링이 겹침) */
+  .card.pres-on{box-shadow:var(--pres-ring), var(--shadow-1); transition:box-shadow .2s ease;}
+  tr.pres-on > td:first-child{box-shadow:inset 3px 0 0 var(--pres-color);}
   .pres-pencil{position:absolute; right:-5px; bottom:-5px; width:13px; height:13px; border-radius:999px; background:var(--accent); color:#fff; font-size:9px; line-height:13px; text-align:center; box-shadow:0 0 0 1.5px var(--surface);}
   .pres-bar{display:flex; align-items:center; gap:10px; margin:0 0 12px; padding:8px 12px; border-radius:10px; background:var(--accent-tint); color:var(--ink); font-size:12.8px; line-height:1.45;}
   .pres-bar-icons{display:inline-flex; gap:6px; flex:none;}
@@ -1248,7 +1251,7 @@ function fbSetPresence_(p){
   const ref = FB.rtdb.ref(`${FB.base}/presence/${p.session}`);
   if(p.taskId){
     ref.onDisconnect().remove();
-    ref.set({s:p.session, u:p.userId||'', n:p.name||'', c:p.color||'', t:String(p.taskId), m:p.mode==='edit'?'edit':'view', at:firebase.database.ServerValue.TIMESTAMP});
+    ref.set({s:p.session, u:p.userId||'', n:p.name||'', c:p.color||'', t:String(p.taskId), m:['edit','hover'].includes(p.mode)?p.mode:'view', at:firebase.database.ServerValue.TIMESTAMP});
   } else ref.remove();
 }
 // 전환 후 한동안은 구글 시트에도 같이 저장해 둔다(문제가 생기면 예전 방식으로 바로 되돌릴 수 있도록). 실패해도 무시.
@@ -1952,21 +1955,27 @@ function presenceOthersOn_(taskId){
     if(p.t!==taskId || p.s===PRESENCE.session || (p.u && p.u===currentUserId)) return;
     const key = p.u || p.s; // GUEST(계정 없음)끼리는 한 사람으로 합치지 않는다
     const prev = byUser.get(key);
-    if(!prev || (p.m==='edit' && prev.m!=='edit')) byUser.set(key, p);
+    if(!prev || presenceRank_(p.m) < presenceRank_(prev.m)) byUser.set(key, p);
   });
-  return [...byUser.values()].sort((a,b)=>(a.m==='edit'?0:1)-(b.m==='edit'?0:1));
+  return [...byUser.values()].sort((a,b)=>presenceRank_(a.m)-presenceRank_(b.m));
 }
+const presenceRank_ = m => m==='edit' ? 0 : m==='hover' ? 2 : 1; // 편집 중 > 열어서 보는 중 > 마우스로 가리키는 중
+function presenceColor_(p){ const u = (USERS||[]).find(x=>x.id===p.u); return (u && u.color) || p.c || '#8b948f'; }
 function presenceIconHtml_(p, size){
   const user = (USERS||[]).find(u=>u.id===p.u) || {name:p.n||'?', color:p.c||'#8b948f'};
-  const what = p.m==='edit' ? '편집 중' : '보는 중';
+  const what = p.m==='edit' ? '편집 중' : p.m==='hover' ? '살펴보는 중' : '보는 중';
   return `<span class="pres-icon ${p.m==='edit'?'pres-edit':''}" title="${escapeHtml(user.name)} — ${what}" aria-label="${escapeHtml(user.name)} ${what}">${avatarHtml({name:user.name, color:user.color||p.c||'#8b948f'}, size)}${p.m==='edit'?'<span class="pres-pencil" aria-hidden="true">✎</span>':''}</span>`;
 }
 function renderPresenceBadges_(){
   document.querySelectorAll('.card[data-id], tr[data-id]').forEach(el=>{
     const others = presenceOthersOn_(el.dataset.id);
     let stack = el.querySelector(':scope .pres-stack');
-    if(!others.length){ if(stack) stack.remove(); el.style.removeProperty('--pres-count'); return; }
+    if(!others.length){ if(stack) stack.remove(); el.style.removeProperty('--pres-count'); el.style.removeProperty('--pres-ring'); el.style.removeProperty('--pres-color'); el.classList.remove('pres-on'); return; }
     if(el.tagName!=='TR') el.style.setProperty('--pres-count', others.length);
+    // 테두리를 그 사람 색으로 — 여러 명이면 사람마다 한 겹씩 바깥으로 링을 겹친다.
+    el.style.setProperty('--pres-ring', others.map((p,i)=>`0 0 0 ${3+i*3}px ${presenceColor_(p)}`).join(', '));
+    el.style.setProperty('--pres-color', presenceColor_(others[0]));
+    el.classList.add('pres-on');
     if(!stack){
       stack = document.createElement('span'); stack.className = 'pres-stack';
       if(el.tagName==='TR'){ const td = el.querySelector('.td-title') || el.cells[1]; if(td) td.appendChild(stack); }
@@ -1991,6 +2000,24 @@ function renderPresenceInModal_(){
     + (others.length>editing.length ? names(others.filter(p=>p.m!=='edit'))+'이 보는 중' : '');
   bar.innerHTML = `<span class="pres-bar-icons">${others.map(p=>presenceIconHtml_(p, 22)).join('')}</span><span>${escapeHtml(text)}${editing.length?' — 같은 부분을 동시에 고치면 저장할 때 비교 화면이 떠요':''}</span>`;
 }
+// 카드를 클릭하기 전, 마우스로 잠시(0.35초) 가리키고 있으면 "살펴보는 중"으로 알린다. 카드를 연 상태에서는
+// 열어서 보는 중/편집 중이 우선. 실시간(Firebase)일 때만 — 예전 방식은 요청이 늘어 서버 부담이 커서 제외.
+(function wireHoverPresence_(){
+  let hoverT = null, leaveT = null, cur = null;
+  const overlayOpen = ()=>document.getElementById('overlay').classList.contains('open');
+  const idOf = el=>{ const c = el && el.closest ? el.closest('.card[data-id], tr[data-id]') : null; return c ? c.dataset.id : null; };
+  const clearHover = ()=>{ cur = null; if(PRESENCE.mode==='hover' && !overlayOpen()) setPresence_(null, 'view'); };
+  document.addEventListener('mouseover', e=>{
+    if(!FB.on || overlayOpen()) return;
+    const id = idOf(e.target);
+    if(id && id===cur){ clearTimeout(leaveT); return; }
+    clearTimeout(hoverT); clearTimeout(leaveT);
+    if(!id){ leaveT = setTimeout(clearHover, 300); return; }
+    hoverT = setTimeout(()=>{ if(overlayOpen()) return; cur = id; setPresence_(id, 'hover'); }, 350);
+  });
+  document.documentElement.addEventListener('mouseleave', ()=>{ clearTimeout(hoverT); clearTimeout(leaveT); if(FB.on) clearHover(); });
+  window.addEventListener('blur', ()=>{ clearTimeout(hoverT); if(FB.on) clearHover(); });
+})();
 (function wirePresence_(){
   const modal = document.getElementById('modal');
   const markEdit = ()=>{ if(PRESENCE.taskId && modal.dataset.taskId===PRESENCE.taskId && document.getElementById('overlay').classList.contains('open')) setPresence_(PRESENCE.taskId, 'edit'); };
@@ -5875,7 +5902,7 @@ function openDetail(id){
     modal.prepend(note);
   }
   // 접속 표시: 이 카드를 연 것을 알리고(편집 중이던 같은 카드를 다시 그린 경우는 편집 중 유지), 다른 사람 표시를 그린다.
-  setPresence_(id, PRESENCE.taskId===id ? PRESENCE.mode : 'view');
+  setPresence_(id, (PRESENCE.taskId===id && PRESENCE.mode==='edit') ? 'edit' : 'view');
   renderPresenceInModal_();
 }
 let boardViewDirty=false;
