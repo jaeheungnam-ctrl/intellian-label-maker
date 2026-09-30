@@ -1015,7 +1015,7 @@ const boardSync={
   taskRetry:new Map(),          // id -> {msg, nextAt, delay} 서버가 거절한 카드는 그 카드만 따로 재시도
   conflicts:new Map(),          // id -> 비교 화면에서 사용자가 고르기를 기다리는 동시 수정
   connected:false, everConnected:false, connecting:false,
-  reconnectTimer:null, reconnectDelay:1000, pushEpoch:0,
+  reconnectTimer:null, reconnectDelay:2000, pushEpoch:0,
 };
 const BOARD_PENDING_KEY = 'ppe_board_pending_v2';
 const BOARD_BASELINES_KEY = 'ppe_board_task_baselines_v2';
@@ -1344,8 +1344,9 @@ function scheduleFlushForRetries_(){
 }
 
 // ---- 연결 유지 ----
-// 요청 한 번 실패는 흔한 일(구글 서버 일시 지연 등)이므로, 실패하면 1초→2초→…→최대 5초 간격으로
-// 절대 포기하지 않고 다시 연결한다. 동시에 여러 번 시도해 서버를 더 바쁘게 만들지 않도록 한 번에 하나씩만.
+// 요청 한 번 실패는 흔한 일(구글 서버 일시 지연 등)이므로 절대 포기하지 않고 다시 연결한다. 다만 서버(Apps Script)는
+// 동시에 처리하는 요청 수에 한도가 있어, 서버가 밀릴 때 모든 창이 1~5초마다 재시도하면 더 밀리는 악순환이 생긴다 —
+// 그래서 2→4→8→16→최대 30초로 간격을 늘리고, 창마다 시점을 ±30% 흩어 같은 순간에 몰리지 않게 한다.
 // 토큰 문제(AUTH)는 재시도로 해결되지 않으므로 30초 간격으로 확인만 계속한다.
 function markDisconnected_(err){
   boardSync.connected = false;
@@ -1356,9 +1357,9 @@ function markDisconnected_(err){
 }
 function scheduleReconnect_(forceDelay){
   if(boardSync.reconnectTimer || boardSync.connecting || boardSync.connected) return;
-  const d = forceDelay || boardSync.reconnectDelay;
+  const d = (forceDelay || boardSync.reconnectDelay) * (0.7 + Math.random()*0.6);
   boardSync.reconnectTimer = setTimeout(()=>{ boardSync.reconnectTimer=null; connectBoardShared(); }, d);
-  if(!forceDelay) boardSync.reconnectDelay = Math.min(boardSync.reconnectDelay+1000, 5000);
+  if(!forceDelay) boardSync.reconnectDelay = Math.min(boardSync.reconnectDelay*2, 30000);
 }
 function reconnectNow_(){
   if(boardSync.connected || boardSync.connecting || boardSync.booting) return;
@@ -1790,7 +1791,7 @@ async function connectBoardShared(){
     ]);
     if(!Array.isArray(taskState.tasks)){ const e = Error('서버 업무 응답 형식이 올바르지 않습니다.'); e.network = true; throw e; }
     boardSync.connected = true; boardSync.everConnected = true;
-    boardSync.reconnectDelay = 1000;
+    boardSync.reconnectDelay = 2000;
     boardSync.error = '';
     if(boardSync.authBannerOn) setBoardAuthBanner(false);
     // revision은 서버 목록을 "실제로 반영했을 때만" 기록한다(반영을 미뤘으면 다음 확인 때 다시 받아 반영).
@@ -3316,7 +3317,7 @@ async function fetchMesApiKey(){
     // 네트워크 오류/일시적 배포 전파 지연 등으로 조회 자체가 실패한 경우 — 이걸 그대로 캐시해버리면
     // 새로고침 전까지 "키가 없다"는 잘못된 안내가 계속 남는다. 캐시하지 않고 null로 둬서 다음 호출 때 다시 시도한다.
     console.error('fetchMesApiKey failed', e);
-    return '';
+    return null; // ''(키 미설정)와 구분 — 서버에 연결하지 못한 것
   }
   return mesApiKeyCache;
 }
@@ -3413,6 +3414,13 @@ async function renderMesLookup(){
   const resultEl = document.getElementById('mesResultArea');
   const historyEl = document.getElementById('mesHistoryArea');
   const key = await fetchMesApiKey();
+  if(key === null){
+    statusEl.textContent = '공유 서버(구글)에 연결하지 못해 MES 키를 받지 못했습니다.';
+    statusEl.style.color = 'var(--danger, #b3423a)';
+    resultEl.innerHTML = `<div class="comment-empty">이 PC의 네트워크(VPN·프록시)가 구글 스크립트 주소를 막거나 매우 느릴 수 있습니다. 기본 설정 → PC 간 공유 설정 → 🩺 연결 진단으로 확인해 주세요. 연결되면 이 화면을 다시 열면 됩니다.</div>`;
+    document.getElementById('mesSearchBtn').disabled = true;
+    return;
+  }
   if(!key){
     statusEl.textContent = 'MES API 키가 서버에 설정되어 있지 않습니다.';
     statusEl.style.color = 'var(--danger, #b3423a)';
@@ -6611,7 +6619,8 @@ renderNotifyToggleBtn();
   if(LABEL_LINK && !linkedTask()) await setLabelLink(null); // 연결된 업무가 사라졌으면 정리
   renderCurrent();
   startBoardShared();
-  setInterval(refreshBoardShared,10000);
+  // 창마다 확인 시점을 흩어 모든 창이 같은 순간에 서버를 부르지 않게 한다(서버 동시 처리 한도 보호).
+  setTimeout(()=>setInterval(refreshBoardShared,15000), Math.random()*15000);
   window.addEventListener('focus',()=>{ renderCurrent(); reconnectNow_(); refreshBoardShared(); });
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden) return;
