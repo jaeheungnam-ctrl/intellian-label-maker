@@ -4543,12 +4543,12 @@ document.getElementById('menuBtn').addEventListener('click', ()=>{
   const blob = document.createElement('span');
   blob.className = 'nav-blob'; blob.setAttribute('aria-hidden', 'true');
   list.prepend(blob); list.classList.add('has-blob');
-  let lastY = null;
+  let lastY = null, lastH = null; // 마지막으로 보낸 목표 위치·높이(움직이는 중의 실제 높이와 비교하면 무한 반복됨)
   const move = ()=>{
     const a = list.querySelector('.navbtn.active');
-    if(!a || !a.offsetHeight){ blob.style.opacity = '0'; lastY = null; return; }
+    if(!a || !a.offsetHeight){ blob.style.opacity = '0'; lastY = lastH = null; return; }
     const y = a.offsetTop, h = a.offsetHeight;
-    if(y === lastY && blob.offsetHeight === h) return;
+    if(y === lastY && h === lastH) return;
     blob.style.opacity = '1';
     const anim = typeof gsap !== 'undefined' && lastY !== null && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     if(!anim){ if(typeof gsap !== 'undefined') gsap.set(blob, {y, height:h, scaleX:1, scaleY:1}); else { blob.style.transform = `translateY(${y}px)`; blob.style.height = h+'px'; } }
@@ -4559,9 +4559,10 @@ document.getElementById('menuBtn').addEventListener('click', ()=>{
       gsap.fromTo(blob, {scaleY:1 + .5*far + .15, scaleX:.86}, {scaleY:1, scaleX:1, duration:1.1, ease:'elastic.out(1.4, 0.3)'});
       blob.classList.remove('nav-blob-shine'); void blob.offsetWidth; blob.classList.add('nav-blob-shine');
     }
-    lastY = y;
+    lastY = y; lastH = h;
   };
-  new MutationObserver(move).observe(list, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
+  // 선택 표시 자신의 class 변화(반짝임)는 무시 — 자기 변화에 다시 반응하면 끝없이 반복됨
+  new MutationObserver(ms=>{ if(ms.some(m=> m.target !== blob)) move(); }).observe(list, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
   addEventListener('resize', move);
   move();
   if(typeof gsap !== 'undefined' && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches){
