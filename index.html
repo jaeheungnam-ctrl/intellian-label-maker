@@ -1030,6 +1030,7 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .dq-trend-chart{position:relative; min-width:0;}
 .dq-trend-hit{cursor:pointer;}
 .dq-trend-tip{position:absolute; bottom:calc(100% - 20px); z-index:5; width:280px; max-height:260px; overflow:auto; background:var(--surface); color:var(--ink); border-radius:16px; box-shadow:var(--shadow-2); padding:12px 12px 8px; font-size:12px; display:flex; flex-direction:column; gap:4px;}
+.dq-trend-tip[hidden]{display:none;} /* 위의 display:flex가 hidden을 덮어써서 닫아도 화면에 남던 문제 */
 .dq-trend-tip b{font-size:12px;}
 .dq-trend-tip-head{display:flex; align-items:center; gap:8px; margin-bottom:2px; position:sticky; top:-12px; background:var(--surface); padding-top:2px;}
 .dq-trend-tip-head .dq-trend-tip-x{margin-left:auto; width:26px; height:26px; padding:0; justify-content:center; border-radius:50%; color:var(--muted); flex:none;}
@@ -1044,10 +1045,21 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 
 body.guest-mode #addPreAppliedBtn{display:none !important;}
 /* 카드 요약(마우스 0.65초) */
-.task-peek{position:fixed; z-index:9400; background:var(--surface); color:var(--ink); border-radius:22px; box-shadow:var(--shadow-2), 0 0 0 1px var(--border-soft); padding:16px 18px; display:grid; gap:10px; pointer-events:none; font-size:12.5px;
-  opacity:0; transform:translateX(-8px) scale(.97); transform-origin:left top; transition:opacity .18s ease, transform .22s cubic-bezier(.2,.9,.3,1.3);}
-.task-peek.from-left{transform:translateX(8px) scale(.97); transform-origin:right top;}
-.task-peek.show{opacity:1; transform:none;}
+.task-peek{position:fixed; z-index:9400; background:var(--surface); color:var(--ink); border-radius:22px; box-shadow:var(--shadow-2), 0 0 0 1px var(--border-soft); padding:14px 18px 16px; display:grid; gap:10px; font-size:12.5px; max-height:calc(100vh - 24px); overflow:auto;}
+.task-peek.dragging-peek{box-shadow:0 30px 60px -18px rgba(0,0,0,.45), 0 0 0 2px var(--accent); cursor:grabbing;}
+.pk-head{display:flex; align-items:flex-start; gap:8px; cursor:grab; user-select:none; margin:-4px -6px 0 0;}
+.pk-head .pk-title{flex:1; min-width:0;}
+.pk-x{flex:none; width:28px; height:28px; border-radius:50%; border:0; background:var(--paper); color:var(--muted); font:inherit; cursor:pointer;}
+.pk-x:hover{background:var(--ink); color:var(--paper);}
+.pk-doc a, .pk-links a{color:var(--accent); font-weight:700; text-decoration:none;}
+.pk-doc a:hover, .pk-links a:hover{text-decoration:underline;}
+.pk-links{display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:2px;}
+.pk-done{color:var(--muted);}
+.pk-open{justify-self:start; margin-top:2px;}
+/* 충전 테두리 */
+.peek-ring{position:fixed; z-index:9390; pointer-events:none; overflow:visible;}
+.peek-ring rect{fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; stroke-dasharray:100; stroke-dashoffset:100; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));}
+.peek-ring.full rect{stroke-width:5; opacity:0; transition:opacity .25s ease, stroke-width .25s ease;}
 .pk-title{font-family:var(--font-display); font-weight:800; font-size:15.5px; line-height:1.35; letter-spacing:-.01em;}
 .pk-tags{display:flex; flex-wrap:wrap; gap:5px; margin-top:-2px;}
 .pk-tags span{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--paper); color:var(--muted);}
@@ -1064,7 +1076,6 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 .pk-cmt small{color:var(--muted-2);}
 .pk-live{display:flex; align-items:center; gap:6px; font-size:11.5px;}
 .pk-live i{width:7px; height:7px; border-radius:50%; background:#3d8b5a; box-shadow:0 0 0 3px rgba(61,139,90,.25); flex:none;}
-@media (prefers-reduced-motion: reduce){ .task-peek{transition:none;} }
 /* 상세 창: 하위자재 MDM 링크 */
 .sub-mdm{margin-bottom:16px;}
 .sub-mdm-row{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
@@ -4891,18 +4902,21 @@ function renderDashboard(){
       const x = rect.left - box.left + rect.width/2;
       tip.style.left = Math.min(Math.max(0, x - tip.offsetWidth/2), box.width - tip.offsetWidth) + 'px';
       tip.querySelectorAll('[data-dash-task]').forEach(b=> b.onclick = ()=> openDetail(b.dataset.dashTask));
-      tip.querySelector('.dq-trend-tip-x').onclick = hideTip;
     };
-    const hideTip = ()=>{ clearTimeout(hideT); tip.hidden = true; guide.style.opacity = 0; };
+    // ✕·Esc로 닫으면 마우스가 차트를 한 번 벗어날 때까지 다시 열지 않음(닫자마자 아래 차트에 마우스가 걸려 다시 열리던 문제)
+    let suppressed = false;
+    const hideTip = (byUser)=>{ clearTimeout(hideT); tip.hidden = true; guide.style.opacity = 0; if(byUser) suppressed = true; };
     let hideT = null;
-    tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
-    tChart.addEventListener('mouseleave', ()=>{ hideT = setTimeout(hideTip, 400); });
+    tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ if(suppressed) return; clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
+    tChart.addEventListener('mouseleave', ()=>{ suppressed = false; hideT = setTimeout(()=>hideTip(false), 400); });
     tChart.addEventListener('mouseenter', ()=> clearTimeout(hideT));
-    // 목록 바깥(대시보드 다른 곳)을 누르거나 Esc를 누르면 닫힘
-    el.addEventListener('click', e=>{ if(!tip.hidden && !tChart.contains(e.target)) hideTip(); });
-    if(!window.dqTipEscBound_){ // 대시보드를 다시 그려도 한 번만 등록
+    tip.addEventListener('click', e=>{ if(e.target.closest('.dq-trend-tip-x')){ e.stopPropagation(); hideTip(true); } });
+    // 목록 바깥(대시보드 다른 곳)을 누르면 닫힘
+    el.addEventListener('click', e=>{ if(!tip.hidden && !tChart.contains(e.target)) hideTip(false); });
+    tChart.dqHideTip_ = ()=> hideTip(true);
+    if(!window.dqTipEscBound_){ // 대시보드를 다시 그려도 한 번만 등록. 다른 키 처리보다 먼저 받도록 window 캡처 단계에서
       window.dqTipEscBound_ = true;
-      document.addEventListener('keydown', e=>{ if(e.key==='Escape') document.querySelectorAll('.dq-trend-tip:not([hidden])').forEach(t=>{ t.hidden = true; const g = t.parentElement.querySelector('.dq-trend-guide'); if(g) g.style.opacity = 0; }); });
+      window.addEventListener('keydown', e=>{ if(e.key==='Escape') document.querySelectorAll('.dq-trend-chart').forEach(c=>{ if(c.dqHideTip_ && !c.querySelector('.dq-trend-tip').hidden) c.dqHideTip_(); }); }, true);
     }
   }
   dashMotion_(el);
@@ -5087,46 +5101,107 @@ function taskPeekHtml_(t){
   const lastC = (t.comments||[]).slice(-1)[0];
   const author = resolveAuthor(t);
   const viewers = typeof presenceOthersOn_==='function' ? presenceOthersOn_(t.id) : [];
+  const link = (url, text) => { const u = safeTaskUrl(url); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer" onclick="openTaskLinkWindow(event)">${text} ↗</a>` : ''; };
+  const docLink = link(t.link, escapeHtml(t.docNumber || '업무 링크')) || link(t.docNumber, escapeHtml(t.docNumber||''));
+  const subHtml = subs.length ? `${subs.filter(l=>l.done).length}/${subs.length} 완료<div class="pk-links">${subs.map((l,i)=>`<span class="${l.done?'pk-done':''}">${l.done?'✓ ':''}${link(l.url, '링크 '+(i+1))}</span>`).join('')}</div>` : '';
   return `
-    <div class="pk-title">${escapeHtml(t.title)}</div>
-    <div class="pk-tags"><span>${escapeHtml(t.type)}</span>${t.model?`<span>${escapeHtml(t.model)}</span>`:''}<span>${escapeHtml(t.status)}</span>${t.docNumber?`<span class="mono">${escapeHtml(t.docNumber)}</span>`:''}</div>
+    <div class="pk-head" data-peek-drag title="끌어서 옮길 수 있습니다">
+      <div class="pk-title">${escapeHtml(t.title)}</div>
+      <button type="button" class="pk-x" data-peek-close aria-label="요약 닫기" title="닫기 (Esc)">✕</button>
+    </div>
+    <div class="pk-tags"><span>${escapeHtml(t.type)}</span>${t.model?`<span>${escapeHtml(t.model)}</span>`:''}<span>${escapeHtml(t.status)}</span>${t.docNumber && !docLink?`<span class="mono">${escapeHtml(t.docNumber)}</span>`:''}</div>
+    ${docLink ? `<div class="pk-doc mono">${docLink}</div>` : ''}
     ${sec(kv('완료요청일', dueHtml) + kv('수신일', escapeHtml(t.receivedDate||'')) + kv('완료일', escapeHtml(t.endDate||'')))}
-    ${sec(kv('액션 아이템', actionHtml) + kv('하위자재 MDM', subs.length ? `${subs.filter(l=>l.done).length}/${subs.length} 완료` : '') + kv('신규자재', mats.length ? `${mats.length}건 · ${escapeHtml(mats.slice(0,2).join(', '))}${mats.length>2?'…':''}` : ''))}
+    ${sec(kv('액션 아이템', actionHtml) + kv('하위자재 MDM', subHtml) + kv('신규자재', mats.length ? `${mats.length}건 · ${escapeHtml(mats.slice(0,2).join(', '))}${mats.length>2?'…':''}` : ''))}
     ${sec((noteText!=='(비어있음)' ? `<div class="pk-note">${escapeHtml(noteText)}</div>` : '') + (imgCount ? `<div class="pk-muted">🖼 이미지 ${imgCount}장</div>` : '') +
       (lastC ? `<div class="pk-cmt"><b>${escapeHtml((resolveAuthor(lastC)||{}).name || lastC.author || '')}</b> <small>${mesRelativeTime(lastC.ts)}</small><div>${escapeHtml(plainTextSnippet_(lastC.text, 90))}</div></div>` : ''))}
     ${sec(kv('담당자', escapeHtml(t.assignee||'')) + kv('작성자', author ? escapeHtml(author.name) : '') +
       (viewers.length ? `<div class="pk-live"><i></i>${viewers.map(p=>escapeHtml(((USERS||[]).find(u=>u.id===p.u)||{name:p.n||'?'}).name) + (p.m==='edit'?' 님 편집 중':' 님 보는 중')).join(' · ')}</div>` : ''))}
-    ${sec(kv('선적용', t.preAppliedDocNo ? `<span class="mono">${escapeHtml(t.preAppliedDocNo)}</span>` : '') + kv('품번', escapeHtml(t.partNumber||'')))}`;
+    ${sec(kv('선적용', t.preAppliedDocNo ? `<span class="mono">${escapeHtml(t.preAppliedDocNo)}</span>` : '') + kv('품번', escapeHtml(t.partNumber||'')))}
+    <button type="button" class="btn pk-open" data-peek-open="${escapeHtml(t.id)}">상세 열기</button>`;
 }
 (function setupTaskPeek_(){
   const SEL = '.card[data-id], #view-list tr[data-id], .dq-deadline-card[data-dash-task]';
-  let timer = null, curEl = null, box = null;
-  const hide = ()=>{ clearTimeout(timer); timer = null; curEl = null; if(box){ box.classList.remove('show'); } };
-  const show = el=>{
+  const reduced = ()=> matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let chargeEl = null, chargeTimer = null, ring = null, box = null, boxTaskId = null;
+  // ---- 충전 테두리: 카드 둘레를 0.65초 동안 한 바퀴 그림(화면 위에 띄운 SVG라 카드·행·대시보드 카드 모두 같은 방식) ----
+  const stopCharge = ()=>{ clearTimeout(chargeTimer); chargeTimer = null; chargeEl = null; if(ring){ ring.remove(); ring = null; } };
+  const startCharge = el=>{
+    stopCharge();
+    chargeEl = el;
+    const r = el.getBoundingClientRect(), rad = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 12;
+    ring = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    ring.setAttribute('class', 'peek-ring');
+    Object.assign(ring.style, {left:(r.left-3)+'px', top:(r.top-3)+'px', width:(r.width+6)+'px', height:(r.height+6)+'px'});
+    ring.innerHTML = `<rect x="1.5" y="1.5" width="${r.width+3}" height="${r.height+3}" rx="${rad+2}" pathLength="100"/>`;
+    document.body.appendChild(ring);
+    const rect = ring.firstChild;
+    rect.getBoundingClientRect(); // 시작 상태를 먼저 그리게 한 뒤
+    rect.style.transition = `stroke-dashoffset ${PEEK_DELAY_MS}ms linear`;
+    rect.style.strokeDashoffset = '0';
+    chargeTimer = setTimeout(()=>{ const target = chargeEl; const done = ring; ring = null; chargeEl = null;
+      if(done){ done.classList.add('full'); setTimeout(()=> done.remove(), 260); }
+      if(target && document.body.contains(target)) openPeek(target);
+    }, PEEK_DELAY_MS);
+  };
+  // ---- 요약 창: 한번 뜨면 ✕·Esc·빈 곳 클릭·다른 카드 충전 완료 때까지 남음, 머리 부분을 끌어서 옮길 수 있음 ----
+  const closePeek = ()=>{ if(!box) return; const b = box; box = null; boxTaskId = null;
+    if(typeof gsap!=='undefined' && !reduced()) gsap.to(b, {scale:.85, opacity:0, duration:.18, ease:'power2.in', onComplete:()=>b.remove()}); else b.remove(); };
+  const openPeek = el=>{
     const id = el.dataset.id || el.dataset.dashTask, t = TASKS.find(x=>x.id===id);
     if(!t || document.getElementById('overlay')?.classList.contains('open') || document.querySelector('.card.dragging')) return;
-    if(!box){ box = document.createElement('div'); box.className = 'task-peek'; box.setAttribute('role','tooltip'); document.body.appendChild(box); }
-    box.innerHTML = taskPeekHtml_(t);
-    // 카드 오른쪽에, 자리가 없으면 왼쪽에. 위아래는 화면 안으로.
+    if(box){ box.remove(); box = null; } // 다른 카드 요약이 떠 있었으면 바로 교체
+    box = document.createElement('div'); box.className = 'task-peek'; box.setAttribute('role','dialog'); box.setAttribute('aria-label','업무 요약');
+    box.innerHTML = taskPeekHtml_(t); boxTaskId = id;
+    document.body.appendChild(box);
     const r = el.getBoundingClientRect(), W = Math.min(380, innerWidth - 24);
     box.style.width = W + 'px';
     const h = box.offsetHeight;
-    let left = r.right + 12; if(left + W > innerWidth - 12) left = Math.max(12, r.left - 12 - W);
-    const top = Math.min(Math.max(12, r.top), Math.max(12, innerHeight - h - 12));
+    let left = r.right + 14; const fromLeft = left + W > innerWidth - 12; if(fromLeft) left = Math.max(12, r.left - 14 - W);
+    const top = Math.min(Math.max(12, r.top - 6), Math.max(12, innerHeight - h - 12));
     box.style.left = left + 'px'; box.style.top = top + 'px';
-    box.classList.toggle('from-left', left < r.left);
-    requestAnimationFrame(()=> box.classList.add('show'));
+    // 떡처럼 쫀득하게: 카드 쪽에서 눌린 채 튀어나와 출렁이며 자리잡음
+    if(typeof gsap!=='undefined' && !reduced()){
+      gsap.set(box, {transformOrigin: (fromLeft ? 'right ' : 'left ') + Math.max(0, Math.min(h, r.top + r.height/2 - top)) + 'px'});
+      gsap.timeline()
+        .fromTo(box, {opacity:0, scaleX:.2, scaleY:.6, x: fromLeft ? 20 : -20}, {opacity:1, scaleX:1.12, scaleY:.9, x:0, duration:.16, ease:'power2.out'})
+        .to(box, {scaleX:1, scaleY:1, duration:.9, ease:'elastic.out(1.1, 0.32)'});
+    }
   };
+  // 머리 부분 끌어서 옮기기
+  document.addEventListener('pointerdown', e=>{
+    const head = e.target.closest && e.target.closest('.task-peek [data-peek-drag]');
+    if(!head || e.target.closest('button, a')) return;
+    const b = head.closest('.task-peek'), sx = e.clientX, sy = e.clientY, ox = b.offsetLeft, oy = b.offsetTop;
+    b.classList.add('dragging-peek');
+    const move = ev=>{ b.style.left = Math.min(Math.max(0, ox + ev.clientX - sx), innerWidth - 60) + 'px'; b.style.top = Math.min(Math.max(0, oy + ev.clientY - sy), innerHeight - 40) + 'px'; };
+    const up = ()=>{ b.classList.remove('dragging-peek'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+    e.preventDefault();
+  });
+  // 요약 안의 버튼
+  document.addEventListener('click', e=>{
+    if(e.target.closest('[data-peek-close]')){ closePeek(); return; }
+    const op = e.target.closest('[data-peek-open]'); if(op){ const id = op.dataset.peekOpen; closePeek(); openDetail(id); }
+  });
+  // 요약 바깥을 누르면 닫힘(빈 곳이든 카드든 — 카드를 누르면 상세 창이 열리므로 요약은 닫는다)
+  document.addEventListener('mousedown', e=>{
+    stopCharge();
+    if(box && !box.contains(e.target)) closePeek();
+  }, true);
+  window.addEventListener('keydown', e=>{ if(e.key==='Escape'){ stopCharge(); if(box) closePeek(); } }, true);
+  // 카드 위에 머무르면 충전 시작, 벗어나면 충전 취소(이미 뜬 요약은 그대로)
   document.addEventListener('mouseover', e=>{
     const el = e.target.closest && e.target.closest(SEL);
-    if(el === curEl) return;
-    hide();
-    if(!el || e.buttons) return; // 끌고 있을 때는 띄우지 않음
-    curEl = el;
-    timer = setTimeout(()=>{ if(curEl===el) show(el); }, PEEK_DELAY_MS);
+    if(el === chargeEl) return;
+    stopCharge();
+    if(!el || e.buttons) return;           // 끌고 있을 때는 시작 안 함
+    if(box && boxTaskId === (el.dataset.id || el.dataset.dashTask)) return; // 이미 이 카드 요약이 떠 있음
+    startCharge(el);
   });
-  document.addEventListener('mouseout', e=>{ if(curEl && !curEl.contains(e.relatedTarget)) hide(); });
-  ['mousedown','dragstart','scroll','keydown'].forEach(ev=> document.addEventListener(ev, hide, true));
+  document.addEventListener('mouseout', e=>{ if(chargeEl && !chargeEl.contains(e.relatedTarget)) stopCharge(); });
+  ['dragstart','scroll','wheel'].forEach(ev=> document.addEventListener(ev, stopCharge, true));
+  window.addEventListener('pagehide', ()=>{ stopCharge(); if(box){ box.remove(); box = null; } });
 })();
 
 var boardLastStatus_ = null; // 직전에 그린 보드의 업무별 상태 — 바뀐 카드만 날아가게
