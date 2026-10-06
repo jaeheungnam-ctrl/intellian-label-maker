@@ -1030,7 +1030,10 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .dq-trend-chart{position:relative; min-width:0;}
 .dq-trend-hit{cursor:pointer;}
 .dq-trend-tip{position:absolute; bottom:calc(100% - 20px); z-index:5; width:280px; max-height:260px; overflow:auto; background:var(--surface); color:var(--ink); border-radius:16px; box-shadow:var(--shadow-2); padding:12px 12px 8px; font-size:12px; display:flex; flex-direction:column; gap:4px;}
-.dq-trend-tip b{font-size:12px; margin-bottom:2px;}
+.dq-trend-tip b{font-size:12px;}
+.dq-trend-tip-head{display:flex; align-items:center; gap:8px; margin-bottom:2px; position:sticky; top:-12px; background:var(--surface); padding-top:2px;}
+.dq-trend-tip-head .dq-trend-tip-x{margin-left:auto; width:26px; height:26px; padding:0; justify-content:center; border-radius:50%; color:var(--muted); flex:none;}
+.dq-trend-tip-head .dq-trend-tip-x:hover{background:var(--paper); color:var(--ink);}
 .dq-trend-tip button{display:flex; align-items:center; gap:7px; text-align:left; background:none; border:0; border-radius:8px; padding:4px 6px; font:inherit; color:inherit; cursor:pointer;}
 .dq-trend-tip button:hover{background:var(--paper);}
 .dq-trend-tip button i{width:8px; height:8px; border-radius:50%; flex:none;}
@@ -4860,17 +4863,25 @@ function renderDashboard(){
     const showWeek = (i, rect)=>{
       const w = trendWeeks[i], box = tChart.getBoundingClientRect();
       guide.setAttribute('x1', tx(i)); guide.setAttribute('x2', tx(i)); guide.style.opacity = .25;
-      tip.innerHTML = `<b>${dashKey(w.start).slice(5)} ~ ${dashKey(w.end).slice(5)} · 완료 ${w.done.length}건</b>` +
+      tip.innerHTML = `<div class="dq-trend-tip-head"><b>${dashKey(w.start).slice(5)} ~ ${dashKey(w.end).slice(5)} · 완료 ${w.done.length}건</b><button type="button" class="dq-trend-tip-x" aria-label="닫기" title="닫기 (Esc)">✕</button></div>` +
         (w.done.length ? w.done.slice(0,10).map(t=>`<button type="button" data-dash-task="${escapeHtml(t.id)}"><i style="background:${ownerColor(t.assignee||'미배정')}"></i>${escapeHtml(t.title)}<small>${escapeHtml(t.assignee||'미배정')}</small></button>`).join('') + (w.done.length>10?`<small>외 ${w.done.length-10}건</small>`:'') : '<small>이 주에 완료된 업무가 없습니다</small>');
       tip.hidden = false;
       const x = rect.left - box.left + rect.width/2;
       tip.style.left = Math.min(Math.max(0, x - tip.offsetWidth/2), box.width - tip.offsetWidth) + 'px';
       tip.querySelectorAll('[data-dash-task]').forEach(b=> b.onclick = ()=> openDetail(b.dataset.dashTask));
+      tip.querySelector('.dq-trend-tip-x').onclick = hideTip;
     };
+    const hideTip = ()=>{ clearTimeout(hideT); tip.hidden = true; guide.style.opacity = 0; };
     let hideT = null;
     tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
-    tChart.addEventListener('mouseleave', ()=>{ hideT = setTimeout(()=>{ tip.hidden = true; guide.style.opacity = 0; }, 250); });
-    tip.addEventListener('mouseenter', ()=> clearTimeout(hideT));
+    tChart.addEventListener('mouseleave', ()=>{ hideT = setTimeout(hideTip, 400); });
+    tChart.addEventListener('mouseenter', ()=> clearTimeout(hideT));
+    // 목록 바깥(대시보드 다른 곳)을 누르거나 Esc를 누르면 닫힘
+    el.addEventListener('click', e=>{ if(!tip.hidden && !tChart.contains(e.target)) hideTip(); });
+    if(!window.dqTipEscBound_){ // 대시보드를 다시 그려도 한 번만 등록
+      window.dqTipEscBound_ = true;
+      document.addEventListener('keydown', e=>{ if(e.key==='Escape') document.querySelectorAll('.dq-trend-tip:not([hidden])').forEach(t=>{ t.hidden = true; const g = t.parentElement.querySelector('.dq-trend-guide'); if(g) g.style.opacity = 0; }); });
+    }
   }
   dashMotion_(el);
 }
