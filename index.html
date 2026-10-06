@@ -5200,9 +5200,6 @@ function cardHtml(t){
   const urgency = dueUrgency(t);
   const next = nextStatusOf(t.status);
   const assigneeUser = t.assignee ? USERS.find(u=>u.name===t.assignee) : null;
-  const checklist = checklistFor(t.type, t);
-  const doneCt = checklist.filter(i=>t.actionItems[i.key]).length;
-  const ringPct = checklist.length? Math.round(doneCt/checklist.length*100) : 0;
   const isSummary = boardCardMode === 'summary';
   return `
     <div class="card ${urgency? 'card-'+urgency : ''} ${isSummary?'card-summary':''}" data-id="${t.id}" data-flip-id="${t.id}" draggable="true" style="--card-accent:${tc.c}">
@@ -5212,7 +5209,6 @@ function cardHtml(t){
         ${(!isSummary && t.model)? `<span class="k-tag" style="background:var(--border-soft); color:var(--muted)">${escapeHtml(t.model)}</span>` : ''}
         ${dueBadgeHtml(t)}
         ${!isSummary ? unreadBadgeHtml(t) : ''}
-        ${(!isSummary && checklist.length)? `<span class="k-ring" style="--pct:${ringPct}" title="액션 아이템 ${doneCt}/${checklist.length} 완료">${doneCt}/${checklist.length}</span>` : ''}
       </div>
       <div class="title">${escapeHtml(t.title)}</div>
       <div class="meta">
