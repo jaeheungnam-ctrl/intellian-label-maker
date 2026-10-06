@@ -899,7 +899,92 @@
 .pa-toggle-imgs{display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;}
 .pa-panel-thumb{max-width:160px; max-height:120px; border:1px solid var(--border); border-radius:6px; object-fit:contain;}
 
+/* ===================== 벤토 테마 (2026-10-06, 1단계: 색·글꼴·모양) =====================
+   위의 기존 스타일은 그대로 두고 여기서 덮어쓴다 — 이 블록만 지우면 예전 모습으로 돌아간다.
+   밝은 모드: 따뜻한 미색 바탕 + 흰 둥근 타일 + 검정 버튼 + 주황 강조 / 다크: 짙은 갈색 바탕 + 주황 버튼 */
+:root{
+  --ink:#191714; --paper:#f4f1ec; --surface:#ffffff; --border:#e4dfd6; --border-soft:#eeeae3;
+  --muted:#5f5a52; --muted-2:#8a847a;
+  --primary:#191714; --primary-ink:#000000; --primary-tint:#efebe4;
+  --accent:#ff6b3d; --accent-tint:#ffe9e0;
+  --bento-hot:#ff6b3d; --bento-lime:#c9e86b; --bento-sky:#bfd7ff; --bento-ink:#1d1b18;
+  --radius-lg:26px; --radius-md:16px;
+  --shadow-1:0 1px 0 rgba(25,23,20,.04), 0 6px 18px -10px rgba(25,23,20,.18);
+  --shadow-2:0 2px 0 rgba(25,23,20,.05), 0 16px 34px -14px rgba(25,23,20,.28);
+  --font-display:"Bricolage Grotesque","Pretendard Variable",Pretendard,"Malgun Gothic",sans-serif;
+  --font-body:"Pretendard Variable",Pretendard,-apple-system,"Segoe UI","Malgun Gothic",sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#f2eee7; --paper:#12110f; --surface:#1d1b18; --border:#302d28; --border-soft:#26231f;
+    --muted:#a8a196; --muted-2:#7d776d;
+    --primary:#ff7a4d; --primary-ink:#ffa27f; --primary-tint:#3a2219;
+    --accent:#ff7a4d; --accent-tint:#3a2219;
+    --bento-hot:#ff7a4d; --bento-lime:#a9c94e; --bento-sky:#7f9fd6; --bento-ink:#f2eee7;
+    --shadow-1:0 1px 0 rgba(0,0,0,.3), 0 8px 22px -12px rgba(0,0,0,.6);
+    --shadow-2:0 2px 0 rgba(0,0,0,.35), 0 18px 36px -14px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#f2eee7; --paper:#12110f; --surface:#1d1b18; --border:#302d28; --border-soft:#26231f;
+  --muted:#a8a196; --muted-2:#7d776d;
+  --primary:#ff7a4d; --primary-ink:#ffa27f; --primary-tint:#3a2219;
+  --accent:#ff7a4d; --accent-tint:#3a2219;
+  --bento-hot:#ff7a4d; --bento-lime:#a9c94e; --bento-sky:#7f9fd6; --bento-ink:#f2eee7;
+  --shadow-1:0 1px 0 rgba(0,0,0,.3), 0 8px 22px -12px rgba(0,0,0,.6);
+  --shadow-2:0 2px 0 rgba(0,0,0,.35), 0 18px 36px -14px rgba(0,0,0,.7);
+}
+body{font-family:var(--font-body); letter-spacing:-.005em;}
+.topbar h1, .dash-panel h2, .modal-head h2, .col-head span.name, .dq-tile strong, .dq-ring-label strong{font-family:var(--font-display); letter-spacing:-.02em;}
+.topbar h1{font-size:26px; font-weight:800;}
+.topbar{margin-bottom:22px;}
+
+/* 사이드바: 바탕과 한 몸, 메뉴는 알약 모양 */
+.sidebar{background:var(--paper); border-right:0; padding:22px 14px;}
+.brand{background:var(--bento-ink); border-radius:18px; padding:13px 14px;}
+.brand:hover{background:var(--bento-ink); filter:brightness(1.15);}
+.brand-word{color:var(--paper);}
+.brand-sub{color:color-mix(in srgb, var(--paper) 70%, transparent);}
+.navbtn{border-radius:999px; padding:9px 14px; color:var(--muted);}
+.navbtn:hover{background:var(--surface); color:var(--ink);}
+.navbtn.active{background:var(--primary); color:#fff; box-shadow:var(--shadow-1);}
+.sidebar-foot{border-top:0;}
+.user-box{border-bottom:0; background:var(--surface); border-radius:18px; padding:12px; box-shadow:var(--shadow-1);}
+.resetbtn, .cur-user-who{border-radius:999px;}
+
+/* 버튼·입력칸: 알약 모양 */
+.btn{border-radius:999px; padding:9px 18px; font-weight:700;}
+.btn:hover{background:var(--primary-ink);}
+.btn-ghost{background:var(--surface); color:var(--ink); border:1px solid var(--border);}
+.btn-ghost:hover{background:var(--surface); border-color:var(--ink);}
+.mytoggle, select.filt, .search, .btn-toggle{border-radius:999px;}
+.search{padding:9px 16px;}
+.search:focus, select.filt:focus{border-color:var(--ink); outline:none;}
+.mytoggle.on{background:var(--primary); border-color:var(--primary);}
+
+/* 판(패널·타일·모달): 크게 둥글게, 테두리 대신 그림자 */
+.panel, .dash-panel, .dq-ring-card, .dq-tile, .stat-chip, .announce-item, .notif-item, .pa-card{border-color:transparent; box-shadow:var(--shadow-1);}
+.panel, .dash-panel, .dq-ring-card{border-radius:var(--radius-lg);}
+.dq-tile, .stat-chip, .announce-item, .pa-card{border-radius:20px;}
+.dq-tile:hover, .dq-ring-card:hover{border-color:transparent; box-shadow:var(--shadow-2); transform:translateY(-2px);}
+.dq-tile, .dq-ring-card{transition:box-shadow .18s, transform .18s;}
+.modal, .cf-dialog, .pa-modal, .login-gate-card{border-radius:28px;}
+.overlay{background:rgba(25,23,20,.38); backdrop-filter:blur(3px);}
+
+/* 칸반: 칸은 반투명 판, 카드는 흰 둥근 타일 */
+.col{background:color-mix(in srgb, var(--surface) 55%, var(--paper)); border:0; border-radius:var(--radius-lg);}
+.col-head span.cnt{background:var(--paper);}
+.card{border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-1); transition:box-shadow .18s ease, transform .18s ease, opacity .14s ease;}
+.card:hover{box-shadow:var(--shadow-2); transform:translateY(-2px) rotate(-.3deg);}
+.card::before{top:14px; bottom:auto; height:14px; left:7px; width:4px;}
+.advance-btn{border-radius:999px;}
+.k-tag, .tag, .due-badge, .unread-badge, .status-pill{border-radius:999px;}
+
+@media (prefers-reduced-motion: reduce){ .card:hover, .dq-tile:hover, .dq-ring-card:hover{transform:none;} }
+
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&display=swap">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
