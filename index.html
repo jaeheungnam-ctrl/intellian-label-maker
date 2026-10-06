@@ -948,14 +948,6 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .navbtn{border-radius:999px; padding:9px 14px; color:var(--muted);}
 .navbtn:hover{background:var(--surface); color:var(--ink);}
 .navbtn.active{background:var(--primary); color:#fff; box-shadow:var(--shadow-1);}
-/* 선택 표시 알약(.nav-blob, setupNavBlob_)이 버튼 뒤에서 미끄러져 다님 — 있으면 버튼 자체 배경은 끔 */
-.nav-list.has-blob{position:relative;}
-.nav-list.has-blob .navbtn{position:relative; z-index:1;}
-.nav-list.has-blob .navbtn.active{background:transparent; box-shadow:none;}
-.nav-blob{position:absolute; left:0; right:0; top:0; height:38px; border-radius:999px; background:linear-gradient(110deg, var(--primary) 55%, color-mix(in srgb, var(--bento-hot) 60%, var(--primary))); box-shadow:0 8px 20px -8px color-mix(in srgb, var(--bento-hot) 55%, transparent); pointer-events:none; overflow:hidden; opacity:0;}
-.nav-blob::after{content:""; position:absolute; inset:0; background:linear-gradient(100deg, transparent 30%, rgba(255,255,255,.45) 50%, transparent 70%); transform:translateX(-110%);}
-.nav-blob.nav-blob-shine::after{animation:navShine .8s .15s ease-out;}
-@keyframes navShine{to{transform:translateX(110%)}}
 /* 메뉴 아이콘: 올리면 통통 튀며 커짐 */
 .navbtn .nav-ico{transition:transform .35s cubic-bezier(.34,1.8,.64,1);}
 .navbtn:hover .nav-ico{transform:scale(1.3) rotate(-10deg);}
@@ -1141,7 +1133,7 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 @media (prefers-reduced-motion: reduce){
   .card:hover, .dq-tile:hover, .dq-ring-card:hover{transform:none;}
   .dq-hero::before, .dq-ticker-track, .dq-ticker-live i, .dq-live::before, .dq-live::after{animation:none;}
-  .brand-icon rect, .nav-blob::after{animation:none;} .navbtn:hover .nav-ico{transform:none;}
+  .brand-icon rect{animation:none;} .navbtn:hover .nav-ico{transform:none;}
 }
 
 </style>
@@ -4536,42 +4528,6 @@ document.querySelectorAll('.navbtn').forEach(btn=>{
 document.getElementById('menuBtn').addEventListener('click', ()=>{
   document.getElementById('sidebar').classList.toggle('open');
 });
-// 왼쪽 메뉴: 선택 표시(주황 알약)가 눌린 메뉴로 쫀득하게 미끄러져 이동 + 처음 열 때 메뉴가 차례로 들어옴.
-// 선택(active)을 바꾸는 곳이 여러 군데라 class 변화를 지켜보다가 한 곳에서 움직인다.
-(function setupNavBlob_(){
-  const list = document.getElementById('navList');
-  const blob = document.createElement('span');
-  blob.className = 'nav-blob'; blob.setAttribute('aria-hidden', 'true');
-  list.prepend(blob); list.classList.add('has-blob');
-  let lastY = null, lastH = null; // 마지막으로 보낸 목표 위치·높이(움직이는 중의 실제 높이와 비교하면 무한 반복됨)
-  const move = ()=>{
-    const a = list.querySelector('.navbtn.active');
-    if(!a || !a.offsetHeight){ blob.style.opacity = '0'; lastY = lastH = null; return; }
-    const y = a.offsetTop, h = a.offsetHeight;
-    if(y === lastY && h === lastH) return;
-    blob.style.opacity = '1';
-    const anim = typeof gsap !== 'undefined' && lastY !== null && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if(!anim){ if(typeof gsap !== 'undefined') gsap.set(blob, {y, height:h, scaleX:1, scaleY:1}); else { blob.style.transform = `translateY(${y}px)`; blob.style.height = h+'px'; } }
-    else {
-      const far = Math.min(1, Math.abs(y - lastY) / 240); // 멀리 갈수록 더 길게 늘어났다가 출렁
-      gsap.killTweensOf(blob);
-      gsap.to(blob, {y, height:h, duration:.5, ease:'back.out(1.7)'});
-      gsap.fromTo(blob, {scaleY:1 + .5*far + .15, scaleX:.86}, {scaleY:1, scaleX:1, duration:1.1, ease:'elastic.out(1.4, 0.3)'});
-      blob.classList.remove('nav-blob-shine'); void blob.offsetWidth; blob.classList.add('nav-blob-shine');
-    }
-    lastY = y; lastH = h;
-  };
-  // 선택 표시 자신의 class 변화(반짝임)는 무시 — 자기 변화에 다시 반응하면 끝없이 반복됨
-  new MutationObserver(ms=>{ if(ms.some(m=> m.target !== blob)) move(); }).observe(list, {subtree:true, childList:true, attributes:true, attributeFilter:['class']});
-  addEventListener('resize', move);
-  move();
-  if(typeof gsap !== 'undefined' && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches){
-    const btns = list.querySelectorAll('.navbtn');
-    const intro = gsap.from(btns, {x:-18, opacity:0, duration:.5, stagger:.035, ease:'back.out(2)', delay:.1, clearProps:'transform,opacity'});
-    // 화면 그리기가 멈춘 상태(뒤에 숨은 탭 등)에서 메뉴가 투명하게 남지 않도록 2초 뒤엔 무조건 보이게
-    setTimeout(()=>{ if(intro.progress() < 1){ intro.kill(); gsap.set(btns, {clearProps:'transform,opacity'}); } }, 2000);
-  }
-})();
 document.getElementById('brandHomeBtn').addEventListener('click', ()=>{
   document.querySelectorAll('.navbtn').forEach(b=> b.classList.toggle('active', b.dataset.view==='dashboard'));
   currentView = 'dashboard';
