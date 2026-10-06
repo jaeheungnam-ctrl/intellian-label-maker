@@ -1043,6 +1043,28 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .dq-trend-legend b{color:var(--ink);}
 
 body.guest-mode #addPreAppliedBtn{display:none !important;}
+/* 카드 요약(마우스 0.65초) */
+.task-peek{position:fixed; z-index:9400; background:var(--surface); color:var(--ink); border-radius:22px; box-shadow:var(--shadow-2), 0 0 0 1px var(--border-soft); padding:16px 18px; display:grid; gap:10px; pointer-events:none; font-size:12.5px;
+  opacity:0; transform:translateX(-8px) scale(.97); transform-origin:left top; transition:opacity .18s ease, transform .22s cubic-bezier(.2,.9,.3,1.3);}
+.task-peek.from-left{transform:translateX(8px) scale(.97); transform-origin:right top;}
+.task-peek.show{opacity:1; transform:none;}
+.pk-title{font-family:var(--font-display); font-weight:800; font-size:15.5px; line-height:1.35; letter-spacing:-.01em;}
+.pk-tags{display:flex; flex-wrap:wrap; gap:5px; margin-top:-2px;}
+.pk-tags span{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--paper); color:var(--muted);}
+.pk-sec{display:grid; gap:5px; border-top:1px dashed var(--border); padding-top:9px;}
+.pk-kv{display:grid; grid-template-columns:86px 1fr; gap:8px; align-items:baseline;}
+.pk-kv > span{color:var(--muted-2); font-size:11.5px;}
+.pk-kv > div{min-width:0; overflow-wrap:anywhere;}
+.pk-dday{color:var(--accent);} .pk-late{color:var(--s-delay);}
+.pk-bar{height:6px; border-radius:9px; background:var(--paper); overflow:hidden; margin-top:3px;}
+.pk-bar i{display:block; height:100%; border-radius:9px; background:var(--ink);}
+.pk-muted{color:var(--muted); font-size:11.5px;}
+.pk-note{color:var(--muted); display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;}
+.pk-cmt{background:var(--paper); border-radius:12px; padding:7px 10px;}
+.pk-cmt small{color:var(--muted-2);}
+.pk-live{display:flex; align-items:center; gap:6px; font-size:11.5px;}
+.pk-live i{width:7px; height:7px; border-radius:50%; background:#3d8b5a; box-shadow:0 0 0 3px rgba(61,139,90,.25); flex:none;}
+@media (prefers-reduced-motion: reduce){ .task-peek{transition:none;} }
 /* 상세 창: 하위자재 MDM 링크 */
 .sub-mdm{margin-bottom:16px;}
 .sub-mdm-row{display:flex; align-items:center; gap:8px; margin-bottom:6px;}
@@ -5038,6 +5060,75 @@ function renderToolbar(container){
 /* ================= BOARD (KANBAN) ================= */
 let delayCollapsed = true;
 let boardCardMode = 'detail'; // 'detail' | 'summary' — 상태별 보드 카드를 상세히 보여줄지, 1/3 크기 요약으로 보여줄지
+/* ---------- 카드 요약(마우스를 0.65초 올리면) ----------
+   상태별 보드 카드·전체 목록 행·대시보드 "최근 등록된 업무" 카드 공통. 값이 있는 항목만 보여준다. */
+const PEEK_DELAY_MS = 650;
+function taskPeekHtml_(t){
+  const kv = (k, v) => v ? `<div class="pk-kv"><span>${k}</span><div>${v}</div></div>` : '';
+  const sec = h => h.trim() ? `<div class="pk-sec">${h}</div>` : '';
+  // 일정
+  let dueHtml = '';
+  const due = parseDueDate(t.dueRequest);
+  if(due){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const d = Math.round((due - today)/86400000);
+    const tag = t.status==='완료' ? '' : d<0 ? `<b class="pk-late">${-d}일 지남</b>` : d===0 ? `<b class="pk-dday">오늘</b>` : `<b class="pk-dday">D-${d}</b>`;
+    dueHtml = `${escapeHtml(t.dueRequest)}${tag?' · '+tag:''}`;
+  }
+  // 진행
+  const items = checklistFor(t.type, t);
+  const doneItems = items.filter(i=>t.actionItems && t.actionItems[i.key]);
+  const leftItems = items.filter(i=>!(t.actionItems && t.actionItems[i.key])).map(i=>i.label.replace(/\s*\(.*\)$/,''));
+  const actionHtml = items.length ? `<b>${doneItems.length}/${items.length} 완료</b><div class="pk-bar"><i style="width:${Math.round(doneItems.length/items.length*100)}%"></i></div>${leftItems.length?`<div class="pk-muted">남음: ${escapeHtml(leftItems.slice(0,4).join(', '))}${leftItems.length>4?` 외 ${leftItems.length-4}개`:''}</div>`:''}` : '';
+  const subs = Array.isArray(t.subMdmLinks) ? t.subMdmLinks.filter(l=>l.url) : [];
+  const mats = allMaterialsForTask(t).map(x=>String(x||'').trim()).filter(Boolean);
+  // 내용
+  const noteText = plainTextSnippet_(t.note, 160), imgCount = (String(t.note||'').match(/<img\b/gi)||[]).length;
+  const lastC = (t.comments||[]).slice(-1)[0];
+  const author = resolveAuthor(t);
+  const viewers = typeof presenceOthersOn_==='function' ? presenceOthersOn_(t.id) : [];
+  return `
+    <div class="pk-title">${escapeHtml(t.title)}</div>
+    <div class="pk-tags"><span>${escapeHtml(t.type)}</span>${t.model?`<span>${escapeHtml(t.model)}</span>`:''}<span>${escapeHtml(t.status)}</span>${t.docNumber?`<span class="mono">${escapeHtml(t.docNumber)}</span>`:''}</div>
+    ${sec(kv('완료요청일', dueHtml) + kv('수신일', escapeHtml(t.receivedDate||'')) + kv('완료일', escapeHtml(t.endDate||'')))}
+    ${sec(kv('액션 아이템', actionHtml) + kv('하위자재 MDM', subs.length ? `${subs.filter(l=>l.done).length}/${subs.length} 완료` : '') + kv('신규자재', mats.length ? `${mats.length}건 · ${escapeHtml(mats.slice(0,2).join(', '))}${mats.length>2?'…':''}` : ''))}
+    ${sec((noteText!=='(비어있음)' ? `<div class="pk-note">${escapeHtml(noteText)}</div>` : '') + (imgCount ? `<div class="pk-muted">🖼 이미지 ${imgCount}장</div>` : '') +
+      (lastC ? `<div class="pk-cmt"><b>${escapeHtml((resolveAuthor(lastC)||{}).name || lastC.author || '')}</b> <small>${mesRelativeTime(lastC.ts)}</small><div>${escapeHtml(plainTextSnippet_(lastC.text, 90))}</div></div>` : ''))}
+    ${sec(kv('담당자', escapeHtml(t.assignee||'')) + kv('작성자', author ? escapeHtml(author.name) : '') +
+      (viewers.length ? `<div class="pk-live"><i></i>${viewers.map(p=>escapeHtml(((USERS||[]).find(u=>u.id===p.u)||{name:p.n||'?'}).name) + (p.m==='edit'?' 님 편집 중':' 님 보는 중')).join(' · ')}</div>` : ''))}
+    ${sec(kv('선적용', t.preAppliedDocNo ? `<span class="mono">${escapeHtml(t.preAppliedDocNo)}</span>` : '') + kv('품번', escapeHtml(t.partNumber||'')))}`;
+}
+(function setupTaskPeek_(){
+  const SEL = '.card[data-id], #view-list tr[data-id], .dq-deadline-card[data-dash-task]';
+  let timer = null, curEl = null, box = null;
+  const hide = ()=>{ clearTimeout(timer); timer = null; curEl = null; if(box){ box.classList.remove('show'); } };
+  const show = el=>{
+    const id = el.dataset.id || el.dataset.dashTask, t = TASKS.find(x=>x.id===id);
+    if(!t || document.getElementById('overlay')?.classList.contains('open') || document.querySelector('.card.dragging')) return;
+    if(!box){ box = document.createElement('div'); box.className = 'task-peek'; box.setAttribute('role','tooltip'); document.body.appendChild(box); }
+    box.innerHTML = taskPeekHtml_(t);
+    // 카드 오른쪽에, 자리가 없으면 왼쪽에. 위아래는 화면 안으로.
+    const r = el.getBoundingClientRect(), W = Math.min(380, innerWidth - 24);
+    box.style.width = W + 'px';
+    const h = box.offsetHeight;
+    let left = r.right + 12; if(left + W > innerWidth - 12) left = Math.max(12, r.left - 12 - W);
+    const top = Math.min(Math.max(12, r.top), Math.max(12, innerHeight - h - 12));
+    box.style.left = left + 'px'; box.style.top = top + 'px';
+    box.classList.toggle('from-left', left < r.left);
+    requestAnimationFrame(()=> box.classList.add('show'));
+  };
+  document.addEventListener('mouseover', e=>{
+    const el = e.target.closest && e.target.closest(SEL);
+    if(el === curEl) return;
+    hide();
+    if(!el || e.buttons) return; // 끌고 있을 때는 띄우지 않음
+    curEl = el;
+    timer = setTimeout(()=>{ if(curEl===el) show(el); }, PEEK_DELAY_MS);
+  });
+  document.addEventListener('mouseout', e=>{ if(curEl && !curEl.contains(e.relatedTarget)) hide(); });
+  ['mousedown','dragstart','scroll','keydown'].forEach(ev=> document.addEventListener(ev, hide, true));
+})();
+
 var boardLastStatus_ = null; // 직전에 그린 보드의 업무별 상태 — 바뀐 카드만 날아가게
 // 완료 축하 꽃가루: (x, y) 화면 좌표에서 조각 50개가 터졌다가 떨어짐
 function boardConfetti_(x, y){
