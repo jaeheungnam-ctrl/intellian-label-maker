@@ -1009,14 +1009,14 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 
 /* ===== 벤토 2단계: 대시보드 (원색 타일·흐르는 소식 띠·추이 차트·빛 번짐) ===== */
 .dq-hero{position:relative; isolation:isolate;}
-.dq-hero::before{content:""; position:absolute; z-index:-1; inset:-40px -20px auto 30%; height:260px; border-radius:50%;
+/* 빛 번짐: 화면 전체(왼쪽 메뉴 제외)의 맨 뒤에 깔림 — z-index:-1이라 모든 카드·글자 뒤에서만 보이고,
+   왼쪽 메뉴는 자기 배경이 있어 가려짐. 혼자 천천히 떠다니며(transform) 마우스 쪽으로 따라감(translate) */
+.page-glow{position:fixed; z-index:-1; left:0; top:0; width:960px; height:640px; border-radius:50%; pointer-events:none;
   background:radial-gradient(closest-side, color-mix(in srgb, var(--bento-hot) 45%, transparent), transparent),
              radial-gradient(closest-side, color-mix(in srgb, var(--bento-sky) 55%, transparent), transparent) 60% 40% / 70% 90% no-repeat;
-  filter:blur(40px); opacity:.55; animation:dqFloat 14s ease-in-out infinite alternate; pointer-events:none;}
+  filter:blur(60px); opacity:.8; animation:dqFloat 14s ease-in-out infinite alternate;
+  translate:var(--gx, calc(100vw - 900px)) var(--gy, -220px); transition:translate 1.2s cubic-bezier(.2,.8,.2,1);}
 @keyframes dqFloat{0%{transform:translate(0,0) scale(1)} 50%{transform:translate(-80px,20px) scale(1.15)} 100%{transform:translate(40px,-10px) scale(.95)}}
-/* 빛 번짐이 마우스 쪽으로 부드럽게 따라감: --gx/--gy는 pointermove에서 갱신(setupGlowFollow_),
-   translate는 위 떠다니는 transform 애니메이션과 따로 더해져서 둘 다 살아 있음 */
-.dq-hero::before{translate:var(--gx, 0px) var(--gy, 0px); transition:translate 1.2s cubic-bezier(.2,.8,.2,1);}
 /* 팝업(상세 창 등)이 열리면 그 뒤로 빛이 모여듦 — CSS만 사용, 열릴 때 한 번 재생 */
 .modal{position:relative;}
 .overlay{overflow-x:hidden;} /* 팝업 뒤 빛이 화면 옆으로 넘쳐 가로 스크롤이 생기지 않게 */
@@ -1152,8 +1152,8 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 
 @media (prefers-reduced-motion: reduce){
   .card:hover, .dq-tile:hover, .dq-ring-card:hover{transform:none;}
-  .dq-hero::before, .modal::before, .dq-ticker-track, .dq-ticker-live i, .dq-live::before, .dq-live::after{animation:none;}
-  .dq-hero::before{translate:none;}
+  .page-glow, .modal::before, .dq-ticker-track, .dq-ticker-live i, .dq-live::before, .dq-live::after{animation:none;}
+  .page-glow{transition:none;}
   .brand-icon rect, .navbtn.active, .navbtn.active::after, .navbtn.active .nav-ico{animation:none;} .navbtn:hover .nav-ico{transform:none;}
 }
 
@@ -1167,6 +1167,7 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
+<div class="page-glow" id="pageGlow" aria-hidden="true"></div>
 <div class="app">
   <nav class="sidebar" id="sidebar">
     <button class="brand" id="brandHomeBtn" type="button" title="대시보드로 이동">
@@ -4555,19 +4556,18 @@ document.getElementById('brandHomeBtn').addEventListener('click', ()=>{
   document.getElementById('sidebar').classList.remove('open');
   renderCurrent();
 });
-// 대시보드 빛 번짐이 마우스를 따라감 — 마우스가 움직일 때 위치 값(--gx/--gy)만 바꾸고 움직임은 CSS 전환이 처리.
+// 빛 번짐이 마우스를 따라감 — 마우스가 움직일 때 위치 값(--gx/--gy)만 바꾸고 움직임은 CSS 전환이 처리.
 // 화면 변화를 감시하지 않으므로 스스로 반복될 수 없음. 한 화면 그릴 때 한 번만 계산(rAF).
 (function setupGlowFollow_(){
+  const glow = document.getElementById('pageGlow');
   let pending = null;
   const apply = ()=>{
     const e = pending; pending = null;
-    const hero = currentView === 'dashboard' && document.querySelector('#view-dashboard .dq-hero');
-    if(!hero) return;
-    const r = hero.getBoundingClientRect();
-    const reset = !e; // 마우스가 창 밖으로 나가면 제자리
-    const cx = r.left + r.width*.65 + 10, cy = r.top + 90; // .dq-hero::before 기본 중심
-    hero.style.setProperty('--gx', reset ? '0px' : Math.round(e.clientX - cx) + 'px');
-    hero.style.setProperty('--gy', reset ? '0px' : Math.round(Math.max(-120, Math.min(260, e.clientY - cy))) + 'px');
+    if(!e){ glow.style.removeProperty('--gx'); glow.style.removeProperty('--gy'); return; } // 창 밖 → 기본 자리
+    const sideRight = document.getElementById('sidebar').getBoundingClientRect().right;
+    if(e.clientX < sideRight) return; // 왼쪽 메뉴 위에서는 따라가지 않음
+    glow.style.setProperty('--gx', Math.round(e.clientX - 480) + 'px'); // 빛 크기 960×640의 가운데를 마우스에
+    glow.style.setProperty('--gy', Math.round(e.clientY - 320) + 'px');
   };
   addEventListener('pointermove', e=>{ if(pending === null) requestAnimationFrame(apply); pending = e; }, {passive:true});
   document.documentElement.addEventListener('mouseleave', ()=>{ pending = null; apply(); });
