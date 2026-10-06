@@ -976,6 +976,12 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .col-head span.cnt{background:var(--paper);}
 .card{border:0; border-radius:var(--radius-md); box-shadow:var(--shadow-1); transition:box-shadow .18s ease, transform .18s ease, opacity .14s ease;}
 .card:hover{box-shadow:var(--shadow-2); transform:translateY(-2px) rotate(-.3deg);}
+/* 마우스를 올려도 마감 테두리(지남=빨강, 3일 이내=주황)와 접속 표시 테두리는 그대로 */
+.card.card-overdue:hover{box-shadow:var(--shadow-2), 0 0 0 1.5px var(--s-delay) inset;}
+.card.card-soon:hover{box-shadow:var(--shadow-2), 0 0 0 1.5px var(--accent) inset;}
+.card.pres-on:hover{box-shadow:var(--pres-ring), var(--shadow-2);}
+/* 실행 취소 알림 버튼: 흰 배경이므로 글자는 테마와 상관없이 진한 색(다크 모드에서 흰 글씨로 안 보이던 문제) */
+.undo-toast button{color:#191714;}
 .card::before{top:14px; bottom:auto; height:14px; left:7px; width:4px;}
 .advance-btn{border-radius:999px;}
 .k-tag, .tag, .due-badge, .unread-badge, .status-pill{border-radius:999px;}
