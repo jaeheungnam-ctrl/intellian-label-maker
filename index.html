@@ -1028,6 +1028,18 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 @keyframes dqPulseSvg{0%,100%{transform:scale(1)} 50%{transform:scale(1.45)}}
 .dq-trend-axis{display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted-2); grid-column:2;}
 .dq-trend-chart{position:relative; min-width:0;}
+.dq-trend-layer{position:absolute; left:0; right:0; top:0; height:150px; pointer-events:none;}
+/* 이번 주 점: 가운데 점 + 두 겹 물결이 번갈아 퍼짐 */
+.dq-live{position:absolute; width:10px; height:10px; margin:-5px 0 0 -5px; border-radius:50%; background:var(--c); box-shadow:0 0 0 2.5px var(--surface);}
+.dq-live::before, .dq-live::after{content:""; position:absolute; inset:0; border-radius:50%; border:2px solid var(--c); animation:dqRipple 2.4s cubic-bezier(.2,.6,.3,1) infinite;}
+.dq-live::after{animation-delay:1.2s;}
+@keyframes dqRipple{0%{transform:scale(1); opacity:.75} 100%{transform:scale(3.6); opacity:0}}
+.dq-live-tag{position:absolute; right:16px; transform:translateY(-160%); font-size:10.5px; font-weight:800; color:var(--bento-hot); background:color-mix(in srgb, var(--bento-hot) 12%, var(--surface)); padding:2px 9px; border-radius:999px; white-space:nowrap;}
+/* 마우스가 있는 주 */
+.dq-hover-badge{position:absolute; top:calc(100% - 2px); background:var(--ink); color:var(--paper); font-size:11px; font-weight:800; padding:3px 10px; border-radius:999px; white-space:nowrap; box-shadow:var(--shadow-1);}
+.dq-hover-badge[hidden]{display:none;}
+.dq-hover-dot{position:absolute; width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%; background:var(--surface); border:3px solid var(--c); box-shadow:0 2px 6px rgba(0,0,0,.18);}
+.dq-hover-dot b{position:absolute; left:14px; top:-6px; font-size:11px; font-weight:800; color:var(--c); background:var(--surface); padding:0 4px; border-radius:6px;}
 .dq-trend-hit{cursor:pointer;}
 .dq-trend-tip{position:absolute; bottom:calc(100% - 20px); z-index:5; width:280px; max-height:260px; overflow:auto; background:var(--surface); color:var(--ink); border-radius:16px; box-shadow:var(--shadow-2); padding:12px 12px 8px; font-size:12px; display:flex; flex-direction:column; gap:4px;}
 .dq-trend-tip[hidden]{display:none;} /* 위의 display:flex가 hidden을 덮어써서 닫아도 화면에 남던 문제 */
@@ -1098,7 +1110,7 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 
 @media (prefers-reduced-motion: reduce){
   .card:hover, .dq-tile:hover, .dq-ring-card:hover{transform:none;}
-  .dq-hero::before, .dq-ticker-track, .dq-ticker-live i, .dq-trend-dot{animation:none;}
+  .dq-hero::before, .dq-ticker-track, .dq-ticker-live i, .dq-live::before, .dq-live::after{animation:none;}
 }
 
 </style>
@@ -4739,9 +4751,15 @@ function renderDashboard(){
             <line class="dq-trend-guide" x1="0" x2="0" y1="0" y2="${TH}" style="stroke:var(--ink);stroke-width:1;opacity:0" vector-effect="non-scaling-stroke"/>
             ${trendSeries.map(s=>{ const d = s.counts.map((v,i)=>(i?'L':'M')+tx(i).toFixed(1)+' '+ty(v).toFixed(1)).join(' ');
               return `<path class="dq-trend-area" d="${d} L ${TW} ${TH} L 0 ${TH} Z" style="fill:${s.color};opacity:.08"/><path class="dq-trend-line" d="${d}" style="fill:none;stroke:${s.color};stroke-width:3;stroke-linecap:round;stroke-linejoin:round" vector-effect="non-scaling-stroke"/>`; }).join('')}
-            ${trendSeries.map(s=>`<circle class="dq-trend-dot" cx="${tx(11)}" cy="${ty(s.counts[11])}" r="5" style="fill:${s.color}"/>`).join('')}
             ${trendWeeks.map((w,i)=>`<rect class="dq-trend-hit" data-week="${i}" x="${Math.max(0, tx(i)-TW/22)}" y="0" width="${TW/11}" height="${TH}" style="fill:transparent"/>`).join('')}
           </svg>
+          <!-- 점·배지는 SVG 밖(HTML)에 얹어서 차트가 가로로 늘어나도 동그랗게 -->
+          <div class="dq-trend-layer" aria-hidden="true">
+            ${trendSeries.map(s=>`<span class="dq-live" style="left:${(tx(11)/TW*100).toFixed(2)}%;top:${(ty(s.counts[11])/TH*100).toFixed(2)}%;--c:${s.color}"></span>`).join('')}
+            ${trendSeries.length ? `<span class="dq-live-tag" style="top:${(Math.min(...trendSeries.map(s=>ty(s.counts[11])))/TH*100).toFixed(2)}%">이번 주 ${thisWeekDone}건</span>` : ''}
+            <div class="dq-hover-dots"></div>
+            <div class="dq-hover-badge" hidden></div>
+          </div>
           <div class="dq-trend-tip" hidden></div>
         </div>
         <div class="dq-trend-axis"><span>${dashKey(trendWeeks[0].start).slice(5)}</span><span>최고 ${trendMax}건/주</span><span>이번 주</span></div>
@@ -4909,8 +4927,20 @@ function renderDashboard(){
     let suppressed = false;
     const hideTip = (byUser)=>{ clearTimeout(hideT); tip.hidden = true; guide.style.opacity = 0; if(byUser) suppressed = true; };
     let hideT = null;
-    tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ if(suppressed) return; clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
-    tChart.addEventListener('mouseleave', ()=>{ suppressed = false; hideT = setTimeout(()=>hideTip(false), 400); });
+    // 마우스가 있는 주: 세로선 + "MM/DD 주 · n건" 배지 + 담당자별 값 위치에 점(목록을 닫아 둔 상태에서도 표시)
+    const badge = tChart.querySelector('.dq-hover-badge'), hDots = tChart.querySelector('.dq-hover-dots');
+    const markWeek = i=>{
+      const w = trendWeeks[i], xp = tx(i)/TW*100;
+      guide.setAttribute('x1', tx(i)); guide.setAttribute('x2', tx(i)); guide.style.opacity = .25;
+      badge.textContent = `${dashKey(w.start).slice(5)} 주 · ${w.done.length}건`;
+      badge.style.left = xp + '%';
+      badge.style.transform = `translate(${i===0 ? '0' : i===11 ? '-100%' : '-50%'}, -100%)`;
+      badge.hidden = false;
+      hDots.innerHTML = trendSeries.map(s=>`<span class="dq-hover-dot" style="left:${xp}%;top:${ty(s.counts[i])/TH*100}%;--c:${s.color}"><b>${s.counts[i]}</b></span>`).join('');
+    };
+    const unmarkWeek = ()=>{ badge.hidden = true; hDots.innerHTML = ''; if(tip.hidden) guide.style.opacity = 0; };
+    tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ markWeek(+r.dataset.week); if(suppressed) return; clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
+    tChart.addEventListener('mouseleave', ()=>{ suppressed = false; unmarkWeek(); hideT = setTimeout(()=>hideTip(false), 400); });
     tChart.addEventListener('mouseenter', ()=> clearTimeout(hideT));
     tip.addEventListener('click', e=>{ if(e.target.closest('.dq-trend-tip-x')){ e.stopPropagation(); hideTip(true); } });
     // 목록 바깥(대시보드 다른 곳)을 누르면 닫힘
@@ -4956,6 +4986,7 @@ function dashMotion_(el){
   // 추이 차트: 선이 그려지고, 면이 채워짐
   q('.dq-trend-line').forEach(p=>{ const L = p.getTotalLength(); gsap.set(p, {strokeDasharray:L, strokeDashoffset:L}); tl.to(p, {strokeDashoffset:0, duration:1.8, ease:'power2.inOut', onComplete:()=>gsap.set(p,{clearProps:'strokeDasharray,strokeDashoffset'})}, .5); });
   tl.from(q('.dq-trend-area'), {opacity:0, duration:1}, 1.2);
+  tl.from(q('.dq-live, .dq-live-tag'), {scale:0, opacity:0, duration:.6, stagger:.08, ease:'back.out(3)'}, 2.1); // 선이 다 그려진 뒤 이번 주 점이 톡
   // 아래쪽 패널들은 스크롤해서 보일 때 하나씩 올라옴
   const hasST = typeof ScrollTrigger !== 'undefined';
   if(hasST) gsap.registerPlugin(ScrollTrigger);
