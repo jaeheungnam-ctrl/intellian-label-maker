@@ -1027,6 +1027,17 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 .dq-trend-dot{fill:var(--bento-hot); animation:dqPulseSvg 1.8s ease-out infinite; transform-box:fill-box; transform-origin:center;}
 @keyframes dqPulseSvg{0%,100%{transform:scale(1)} 50%{transform:scale(1.45)}}
 .dq-trend-axis{display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted-2); grid-column:2;}
+.dq-trend-chart{position:relative; min-width:0;}
+.dq-trend-hit{cursor:pointer;}
+.dq-trend-tip{position:absolute; bottom:calc(100% - 20px); z-index:5; width:280px; max-height:260px; overflow:auto; background:var(--surface); color:var(--ink); border-radius:16px; box-shadow:var(--shadow-2); padding:12px 12px 8px; font-size:12px; display:flex; flex-direction:column; gap:4px;}
+.dq-trend-tip b{font-size:12px; margin-bottom:2px;}
+.dq-trend-tip button{display:flex; align-items:center; gap:7px; text-align:left; background:none; border:0; border-radius:8px; padding:4px 6px; font:inherit; color:inherit; cursor:pointer;}
+.dq-trend-tip button:hover{background:var(--paper);}
+.dq-trend-tip button i{width:8px; height:8px; border-radius:50%; flex:none;}
+.dq-trend-tip button small, .dq-trend-tip > small{margin-left:auto; color:var(--muted-2); white-space:nowrap;}
+.dq-trend-legend{grid-column:2; display:flex; flex-wrap:wrap; gap:6px 14px; font-size:11.5px; color:var(--muted);}
+.dq-trend-legend i{display:inline-block; width:10px; height:3px; border-radius:2px; margin-right:5px; vertical-align:middle;}
+.dq-trend-legend b{color:var(--ink);}
 
 @media (prefers-reduced-motion: reduce){
   .card:hover, .dq-tile:hover, .dq-ring-card:hover{transform:none;}
@@ -1036,6 +1047,7 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/Flip.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&display=swap">
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/7.0.0/tesseract.min.js"></script>
@@ -4605,32 +4617,38 @@ function renderDashboard(){
 
   // ---- 실시간 소식 띠: 최근 활동 12건이 흘러감(같은 목록을 두 번 이어 붙여 끊김 없이 반복) ----
   const tickerItems = ACTIVITY_LOG.slice(0, 12).map(a=>`<button type="button" class="dq-ticker-item" ${a.taskId?`data-dash-task="${escapeHtml(a.taskId)}"`:''}>${NOTIF_ICON[a.type]||'•'} <span>${escapeHtml(String(a.message||'').replace(/<\/?b>/g,''))}</span><small>${escapeHtml(a.by||'')} · ${mesRelativeTime(a.ts)}</small></button>`).join('');
-  const tickerHtml = tickerItems ? `<div class="dq-ticker" aria-label="최근 활동"><span class="dq-ticker-live"><i></i>LIVE</span><div class="dq-ticker-win"><div class="dq-ticker-track" style="--dq-dur:${Math.max(30, Math.min(12, ACTIVITY_LOG.length)*7)}s">${tickerItems}<span aria-hidden="true" style="display:contents">${tickerItems}</span></div></div></div>` : '';
+  const tickerHtml = tickerItems ? `<div class="dq-ticker" aria-label="최근 활동"><span class="dq-ticker-live"><i></i>LIVE</span><div class="dq-ticker-win"><div class="dq-ticker-track">${tickerItems}<span aria-hidden="true" style="display:contents">${tickerItems}</span></div></div></div>` : '';
 
-  // ---- 최근 12주 완료 추이(완료일 기준, 주=월~일) ----
+  // ---- 최근 12주 완료 추이 — 담당자별 선(완료일 기준, 주=월~일). 주에 마우스를 올리면 그 주에 완료된 업무 목록 ----
   const trendMonday = dashShift(today, -((today.getDay()+6)%7));
   const trendWeeks = Array.from({length:12}, (_,i)=>{
     const start = dashShift(trendMonday, -7*(11-i)), end = dashShift(start, 6);
-    return {start, count: tasks.filter(t=>{ if(t.status!=='완료') return false; const d = dashDate(t.endDate); return d && d>=start && d<=end; }).length};
+    return {start, end, done: tasks.filter(t=>{ if(t.status!=='완료') return false; const d = dashDate(t.endDate); return d && d>=start && d<=end; })};
   });
-  const trendMax = Math.max(1, ...trendWeeks.map(w=>w.count));
-  const TW = 600, TH = 150, tPts = trendWeeks.map((w,i)=>[i*TW/11, TH - 8 - w.count/trendMax*(TH-24)]);
-  const tLine = tPts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-  const tLast = tPts[tPts.length-1], thisWeekDone = trendWeeks[11].count, lastWeekDone = trendWeeks[10].count;
+  const trendOwners = [...new Set(trendWeeks.flatMap(w=>w.done.map(t=>t.assignee||'미배정')))].sort();
+  const ownerColor = o => { const u = USERS.find(x=>x.name===o); return u ? u.color : 'var(--muted-2)'; };
+  const trendSeries = trendOwners.map(o=>({owner:o, color:ownerColor(o), counts: trendWeeks.map(w=>w.done.filter(t=>(t.assignee||'미배정')===o).length)}));
+  const trendMax = Math.max(1, ...trendSeries.flatMap(s=>s.counts));
+  const TW = 600, TH = 150, tx = i => i*TW/11, ty = v => TH - 8 - v/trendMax*(TH-24);
+  const thisWeekDone = trendWeeks[11].done.length, lastWeekDone = trendWeeks[10].done.length;
   const trendHtml = `
     <div class="dash-panel">
-      <h2>📈 최근 12주 완료 추이</h2>
+      <h2>📈 최근 12주 완료 추이 <span class="muted-cell" style="font-weight:400;font-size:11.5px">담당자별 · 주에 마우스를 올리면 완료된 업무</span></h2>
       <div class="dq-trend">
-        <div class="dq-trend-big"><strong data-count>${thisWeekDone}</strong><span>이번 주 완료 · 지난주 ${lastWeekDone}건</span></div>
-        <svg viewBox="0 0 ${TW} ${TH}" preserveAspectRatio="none" role="img" aria-label="최근 12주 주별 완료 건수">
-          <defs><linearGradient id="dqTrendFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--bento-hot);stop-opacity:.45"/><stop offset="1" style="stop-color:var(--bento-hot);stop-opacity:0"/></linearGradient></defs>
-          ${[.25,.5,.75].map(f=>`<line x1="0" x2="${TW}" y1="${TH*f}" y2="${TH*f}" style="stroke:var(--border);stroke-dasharray:3 5"/>`).join('')}
-          <path class="dq-trend-area" d="${tLine} L ${TW} ${TH} L 0 ${TH} Z" style="fill:url(#dqTrendFill)"/>
-          <path class="dq-trend-line" d="${tLine}" style="fill:none;stroke:var(--bento-hot);stroke-width:3;stroke-linecap:round;stroke-linejoin:round" vector-effect="non-scaling-stroke"/>
-          ${tPts.map((p,i)=>`<circle cx="${p[0]}" cy="${p[1]}" r="9" style="fill:transparent"><title>${dashKey(trendWeeks[i].start)} 주: ${trendWeeks[i].count}건</title></circle>`).join('')}
-          <circle class="dq-trend-dot" cx="${tLast[0]}" cy="${tLast[1]}" r="6"/>
-        </svg>
-        <div class="dq-trend-axis"><span>${dashKey(trendWeeks[0].start).slice(5)}</span><span>최고 ${trendMax}건</span><span>이번 주</span></div>
+        <div class="dq-trend-big"><strong>${thisWeekDone}</strong><span>이번 주 완료 · 지난주 ${lastWeekDone}건</span></div>
+        <div class="dq-trend-chart">
+          <svg viewBox="0 0 ${TW} ${TH}" preserveAspectRatio="none" role="img" aria-label="최근 12주 담당자별 주별 완료 건수">
+            ${[.25,.5,.75].map(f=>`<line x1="0" x2="${TW}" y1="${TH*f}" y2="${TH*f}" style="stroke:var(--border);stroke-dasharray:3 5"/>`).join('')}
+            <line class="dq-trend-guide" x1="0" x2="0" y1="0" y2="${TH}" style="stroke:var(--ink);stroke-width:1;opacity:0" vector-effect="non-scaling-stroke"/>
+            ${trendSeries.map(s=>{ const d = s.counts.map((v,i)=>(i?'L':'M')+tx(i).toFixed(1)+' '+ty(v).toFixed(1)).join(' ');
+              return `<path class="dq-trend-area" d="${d} L ${TW} ${TH} L 0 ${TH} Z" style="fill:${s.color};opacity:.08"/><path class="dq-trend-line" d="${d}" style="fill:none;stroke:${s.color};stroke-width:3;stroke-linecap:round;stroke-linejoin:round" vector-effect="non-scaling-stroke"/>`; }).join('')}
+            ${trendSeries.map(s=>`<circle class="dq-trend-dot" cx="${tx(11)}" cy="${ty(s.counts[11])}" r="5" style="fill:${s.color}"/>`).join('')}
+            ${trendWeeks.map((w,i)=>`<rect class="dq-trend-hit" data-week="${i}" x="${Math.max(0, tx(i)-TW/22)}" y="0" width="${TW/11}" height="${TH}" style="fill:transparent"/>`).join('')}
+          </svg>
+          <div class="dq-trend-tip" hidden></div>
+        </div>
+        <div class="dq-trend-axis"><span>${dashKey(trendWeeks[0].start).slice(5)}</span><span>최고 ${trendMax}건/주</span><span>이번 주</span></div>
+        <div class="dq-trend-legend">${trendSeries.length ? trendSeries.map(s=>`<span><i style="background:${s.color}"></i>${escapeHtml(s.owner)} <b>${s.counts.reduce((a,b)=>a+b,0)}</b></span>`).join('') : '<span class="dash-note">최근 12주에 완료된 업무가 없습니다.</span>'}</div>
       </div>
     </div>`;
 
@@ -4773,6 +4791,28 @@ function renderDashboard(){
   el.querySelector('#dashGanttToday').onclick=()=>{dashboardGanttMonthOffset=0;renderDashboard();};
   el.querySelectorAll('[data-dash-task]').forEach(btn=>btn.onclick=()=>openDetail(btn.dataset.dashTask));
   el.querySelectorAll('[data-dash-owner]').forEach(btn=>btn.onclick=()=>goToOwnerList(btn.dataset.dashOwner));
+  // 소식 띠 속도: 내용 길이와 상관없이 초당 약 40px(읽을 수 있는 속도)로 흐르게
+  const tickTrack = el.querySelector('.dq-ticker-track');
+  if(tickTrack) tickTrack.style.setProperty('--dq-dur', Math.max(25, tickTrack.scrollWidth/2/40).toFixed(0)+'s');
+  // 완료 추이: 주에 마우스를 올리면 세로선 + 그 주에 완료된 업무 목록(누르면 그 업무)
+  const tChart = el.querySelector('.dq-trend-chart');
+  if(tChart){
+    const tip = tChart.querySelector('.dq-trend-tip'), guide = tChart.querySelector('.dq-trend-guide');
+    const showWeek = (i, rect)=>{
+      const w = trendWeeks[i], box = tChart.getBoundingClientRect();
+      guide.setAttribute('x1', tx(i)); guide.setAttribute('x2', tx(i)); guide.style.opacity = .25;
+      tip.innerHTML = `<b>${dashKey(w.start).slice(5)} ~ ${dashKey(w.end).slice(5)} · 완료 ${w.done.length}건</b>` +
+        (w.done.length ? w.done.slice(0,10).map(t=>`<button type="button" data-dash-task="${escapeHtml(t.id)}"><i style="background:${ownerColor(t.assignee||'미배정')}"></i>${escapeHtml(t.title)}<small>${escapeHtml(t.assignee||'미배정')}</small></button>`).join('') + (w.done.length>10?`<small>외 ${w.done.length-10}건</small>`:'') : '<small>이 주에 완료된 업무가 없습니다</small>');
+      tip.hidden = false;
+      const x = rect.left - box.left + rect.width/2;
+      tip.style.left = Math.min(Math.max(0, x - tip.offsetWidth/2), box.width - tip.offsetWidth) + 'px';
+      tip.querySelectorAll('[data-dash-task]').forEach(b=> b.onclick = ()=> openDetail(b.dataset.dashTask));
+    };
+    let hideT = null;
+    tChart.querySelectorAll('.dq-trend-hit').forEach(r=> r.addEventListener('mouseenter', ()=>{ clearTimeout(hideT); showWeek(+r.dataset.week, r.getBoundingClientRect()); }));
+    tChart.addEventListener('mouseleave', ()=>{ hideT = setTimeout(()=>{ tip.hidden = true; guide.style.opacity = 0; }, 250); });
+    tip.addEventListener('mouseenter', ()=> clearTimeout(hideT));
+  }
   dashMotion_(el);
 }
 
@@ -4926,6 +4966,21 @@ function renderToolbar(container){
 /* ================= BOARD (KANBAN) ================= */
 let delayCollapsed = true;
 let boardCardMode = 'detail'; // 'detail' | 'summary' — 상태별 보드 카드를 상세히 보여줄지, 1/3 크기 요약으로 보여줄지
+var boardLastStatus_ = null; // 직전에 그린 보드의 업무별 상태 — 바뀐 카드만 날아가게
+// 완료 축하 꽃가루: (x, y) 화면 좌표에서 조각 50개가 터졌다가 떨어짐
+function boardConfetti_(x, y){
+  const colors = ['#ff6b3d','#c9e86b','#bfd7ff','#191714','#ffd166','#b08cff'];
+  for(let i=0;i<50;i++){
+    const p = document.createElement('i');
+    const s = 6 + Math.random()*6;
+    Object.assign(p.style, {position:'fixed', left:x+'px', top:y+'px', width:s+'px', height:(s*0.6)+'px', background:colors[i%colors.length], borderRadius: i%3 ? '2px' : '50%', zIndex:'9100', pointerEvents:'none'});
+    document.body.appendChild(p);
+    const ang = Math.random()*Math.PI*2, dist = 60 + Math.random()*140;
+    gsap.timeline({onComplete:()=>p.remove()})
+      .to(p, {x:Math.cos(ang)*dist, y:Math.sin(ang)*dist - 80, rotation:Math.random()*540, duration:.55, ease:'power3.out'})
+      .to(p, {y:'+=' + (180 + Math.random()*160), rotation:'+=' + (180 + Math.random()*360), opacity:0, duration:1.1 + Math.random()*.5, ease:'power1.in'});
+  }
+}
 function renderBoard(){
   const el = document.getElementById('view-board');
   // 렌더링할 때마다 컬럼 DOM을 새로 만들기 때문에, 다시 그리기 전에 각 컬럼(및 장기 지연 서브리스트)의
@@ -4934,6 +4989,19 @@ function renderBoard(){
   el.querySelectorAll('.col-body, .delay-sublist').forEach(z=>{
     if(z.dataset.status) scrollMemo[z.dataset.status] = z.scrollTop;
   });
+  // 상태가 바뀐 카드 찾기(다음 단계 버튼·끌어놓기·상세 창·다른 사람의 변경 모두) → 다시 그린 뒤 예전 자리에서 새 자리로 날려 보낸다
+  const motion = typeof gsap !== 'undefined' && typeof Flip !== 'undefined' && !document.hidden && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(motion) gsap.registerPlugin(Flip); // body가 생긴 뒤에 등록해야 함(head에서 등록하면 Flip 초기화가 깨짐) — 여러 번 불러도 무해
+  const prevStatus = boardLastStatus_;
+  boardLastStatus_ = new Map(TASKS.map(t=>[t.id, t.status]));
+  const moved = prevStatus ? TASKS.filter(t=>prevStatus.has(t.id) && prevStatus.get(t.id)!==t.status).map(t=>t.id) : [];
+  let flipState = null; const flying = [];
+  if(motion && moved.length && moved.length <= 10){ // 한꺼번에 많이 바뀌면(데이터 이전 등) 그냥 다시 그림
+    try{
+      flipState = Flip.getState(el.querySelectorAll('.card[data-id]'));
+      moved.forEach(id=>{ const old = el.querySelector(`.card[data-id="${CSS.escape(id)}"]`); if(old) flying.push({id, node:old, rect:old.getBoundingClientRect()}); });
+    }catch(err){ console.warn('보드 애니메이션 준비 실패(무시하고 그냥 그림)', err); flipState = null; flying.length = 0; }
+  }
   const wrap = document.createElement('div');
   renderToolbar(wrap);
   wrap.insertAdjacentHTML('beforeend', `
@@ -4992,6 +5060,32 @@ function renderBoard(){
   el.querySelectorAll('.col-body, .delay-sublist').forEach(z=>{
     if(z.dataset.status && scrollMemo[z.dataset.status] != null) z.scrollTop = scrollMemo[z.dataset.status];
   });
+  if(flipState) try{
+    const movedSet = new Set(moved);
+    // 그대로 있는 카드들은 빈자리를 메우며 부드럽게 미끄러짐
+    Flip.from(flipState, {targets:[...el.querySelectorAll('.card[data-id]')].filter(c=>!movedSet.has(c.dataset.id)), duration:.45, ease:'power2.inOut'});
+    // 옮겨진 카드는 예전 카드를 화면 위에 띄워 새 자리까지 날려 보낸 뒤, 진짜 카드를 보여줌
+    flying.forEach(f=>{
+      const dest = el.querySelector(`.card[data-id="${CSS.escape(f.id)}"]`);
+      if(!dest) return;
+      const to = dest.getBoundingClientRect(), g = f.node;
+      dest.style.visibility = 'hidden';
+      g.classList.remove('dragging');
+      Object.assign(g.style, {position:'fixed', left:f.rect.left+'px', top:f.rect.top+'px', width:f.rect.width+'px', height:f.rect.height+'px', margin:'0', zIndex:'9000', pointerEvents:'none', transition:'none'});
+      document.body.appendChild(g);
+      gsap.timeline({onComplete:()=>{
+        g.remove(); dest.style.visibility = '';
+        gsap.fromTo(dest, {scale:1.06}, {scale:1, duration:.4, ease:'back.out(3)', clearProps:'transform'});
+        if(boardLastStatus_.get(f.id) === '완료') boardConfetti_(to.left + to.width/2, to.top + to.height/2);
+      }})
+        .to(g, {scale:1.05, rotation:-3, boxShadow:'0 26px 50px -14px rgba(0,0,0,.4)', duration:.18, ease:'power2.out'})
+        .to(g, {left:to.left, top:to.top, width:to.width, height:to.height, duration:.65, ease:'power3.inOut'})
+        .to(g, {scale:1, rotation:0, duration:.18}, '-=.18');
+    });
+  }catch(err){
+    console.warn('보드 애니메이션 실패(카드는 정상 표시)', err);
+    flying.forEach(f=>{ f.node.remove(); const d = el.querySelector(`.card[data-id="${CSS.escape(f.id)}"]`); if(d) d.style.visibility = ''; });
+  }
   el.querySelectorAll('.card').forEach(c=>{
     c.addEventListener('click', ()=> openDetail(c.dataset.id));
   });
@@ -5060,7 +5154,7 @@ function cardHtml(t){
   const ringPct = checklist.length? Math.round(doneCt/checklist.length*100) : 0;
   const isSummary = boardCardMode === 'summary';
   return `
-    <div class="card ${urgency? 'card-'+urgency : ''} ${isSummary?'card-summary':''}" data-id="${t.id}" draggable="true" style="--card-accent:${tc.c}">
+    <div class="card ${urgency? 'card-'+urgency : ''} ${isSummary?'card-summary':''}" data-id="${t.id}" data-flip-id="${t.id}" draggable="true" style="--card-accent:${tc.c}">
       <div class="badges">
         ${isNewTask(t)? '<span class="k-new-badge">NEW</span>' : ''}
         <span class="k-tag" style="background:${tc.t}; color:${tc.c}">${t.type}</span>
