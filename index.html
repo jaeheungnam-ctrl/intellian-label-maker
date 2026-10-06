@@ -1058,8 +1058,10 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 .pk-open{justify-self:start; margin-top:2px;}
 /* 충전 테두리 */
 .peek-ring{position:fixed; z-index:9390; pointer-events:none; overflow:visible;}
-.peek-ring rect{fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; stroke-dasharray:100; stroke-dashoffset:100; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));}
-.peek-ring.full rect{stroke-width:5; opacity:0; transition:opacity .25s ease, stroke-width .25s ease;}
+/* dasharray를 둘레보다 살짝 길게(101) 해서 다 그렸을 때 시작점과 끝점이 겹치며 닫힘 */
+.peek-ring rect{fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; stroke-dasharray:101 101; stroke-dashoffset:101; filter:drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));}
+.peek-ring.full rect{animation:peekRingDone .42s ease-out forwards;}
+@keyframes peekRingDone{0%{stroke-width:3; opacity:1} 35%{stroke-width:6; opacity:1; filter:drop-shadow(0 0 12px var(--accent))} 100%{stroke-width:8; opacity:0}}
 .pk-title{font-family:var(--font-display); font-weight:800; font-size:15.5px; line-height:1.35; letter-spacing:-.01em;}
 .pk-tags{display:flex; flex-wrap:wrap; gap:5px; margin-top:-2px;}
 .pk-tags span{font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; background:var(--paper); color:var(--muted);}
@@ -5137,10 +5139,11 @@ function taskPeekHtml_(t){
     document.body.appendChild(ring);
     const rect = ring.firstChild;
     rect.getBoundingClientRect(); // 시작 상태를 먼저 그리게 한 뒤
-    rect.style.transition = `stroke-dashoffset ${PEEK_DELAY_MS}ms linear`;
+    rect.style.transition = `stroke-dashoffset ${PEEK_DELAY_MS - 30}ms linear`; // 타이머보다 살짝 먼저 다 그려지게
     rect.style.strokeDashoffset = '0';
     chargeTimer = setTimeout(()=>{ const target = chargeEl; const done = ring; ring = null; chargeEl = null;
-      if(done){ done.classList.add('full'); setTimeout(()=> done.remove(), 260); }
+      // 끝나는 순간 그리기가 덜 된 채 사라지면 시작·끝 사이에 틈이 보이므로, 한 바퀴를 확실히 다 채운 뒤 한 번 반짝이고 사라짐
+      if(done){ const rc = done.firstChild; rc.style.transition = 'none'; rc.style.strokeDashoffset = '0'; done.classList.add('full'); setTimeout(()=> done.remove(), 420); }
       if(target && document.body.contains(target)) openPeek(target);
     }, PEEK_DELAY_MS);
   };
@@ -5164,8 +5167,8 @@ function taskPeekHtml_(t){
     if(typeof gsap!=='undefined' && !reduced()){
       gsap.set(box, {transformOrigin: (fromLeft ? 'right ' : 'left ') + Math.max(0, Math.min(h, r.top + r.height/2 - top)) + 'px'});
       gsap.timeline()
-        .fromTo(box, {opacity:0, scaleX:.2, scaleY:.6, x: fromLeft ? 20 : -20}, {opacity:1, scaleX:1.12, scaleY:.9, x:0, duration:.16, ease:'power2.out'})
-        .to(box, {scaleX:1, scaleY:1, duration:.9, ease:'elastic.out(1.1, 0.32)'});
+        .fromTo(box, {opacity:0, scaleX:.15, scaleY:.5, x: fromLeft ? 28 : -28}, {opacity:1, scaleX:1.22, scaleY:.82, x:0, duration:.17, ease:'power2.out'})
+        .to(box, {scaleX:1, scaleY:1, duration:1.25, ease:'elastic.out(1.6, 0.24)'});
     }
   };
   // 머리 부분 끌어서 옮기기
