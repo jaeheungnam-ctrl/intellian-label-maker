@@ -1138,6 +1138,8 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
 .done-pick-list button{display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:16px; border:1px solid var(--border); background:var(--paper); color:var(--ink); font:inherit; font-weight:600; cursor:pointer; text-align:left;}
 .done-pick-list button:hover, .done-pick-list button:focus-visible{border-color:var(--ink); outline:none; background:var(--surface);}
 .done-pick .btn-ghost{align-self:flex-end;}
+/* 조회용 링크로 들어온 사람에게 보이는 안내 띠 */
+#viewerBanner{position:fixed; left:50%; top:10px; transform:translateX(-50%); z-index:9000; background:var(--bento-ink, #191714); color:var(--paper, #f4f1ec); padding:7px 16px; border-radius:999px; font-size:12.5px; font-weight:700; box-shadow:0 8px 24px -10px rgba(0,0,0,.5); pointer-events:none; white-space:nowrap;}
 /* 기본 설정 > 라벨 프린터 표: 칸마다 바로 고칠 수 있는 작은 입력칸 */
 .prn-table{border-collapse:collapse; font-size:12px;}
 .prn-table th{position:sticky; top:0; background:var(--surface); text-align:left; padding:6px 4px; font-weight:700; white-space:nowrap; border-bottom:1px solid var(--border);}
@@ -1272,7 +1274,11 @@ const FB = (()=>{
   const q = new URLSearchParams(location.search);
   const devRun = (/^(localhost|127\.0\.0\.1)$/.test(location.hostname) && q.get('fbdev')) || '';
   const wanted = q.get('fb')==='1' ? true : q.get('fb')==='0' ? false : (devRun ? true : FB_DEFAULT_ON);
+  // 조회용 링크: 주소 끝 #view=열쇠.만료시각(ms) — #뒤는 서버·다른 사이트로 전달되지 않음. 한 번 들어오면 이 PC에 기억(주소창에서는 지움)
+  let viewRaw = ((location.hash.match(/(?:^#|&)view=([A-Za-z0-9_-]{20,}\.\d{10,})/)||[])[1]) || '';
+  if(!viewRaw){ try{ viewRaw = localStorage.getItem('ppe_view_key') || ''; }catch(e){} }
   return { wanted, on:false, dev:!!devRun, base: devRun ? 'devtest/'+devRun : 'boards/main', devEmail:(q.get('as')||'').toLowerCase(),
+    devViewer: !!devRun && q.get('view')==='1', viewRaw, viewer:false, viewerExpires:0, viewerError:null,
     mirrorSheets: FB_DEFAULT_ON && !devRun, db:null, rtdb:null, user:null, mirror:null, rev:0, presence:[],
     config:{users:[], models:[], checklists:{}, printers:[]}, tasksSynced:false, configSynced:0, fsOnline:false, listenErr:null, attached:false, unsub:[] };
 })();
@@ -1296,11 +1302,11 @@ async function fbInit_(){
   FB.rtdb.ref('.info/connected').on('value', s=>{
     if(s.val()){ fbPresenceLast = ''; if(typeof sendPresenceNow_==='function') sendPresenceNow_(); } // 다시 연결되면 내 접속 표시를 다시 올림
   });
-  if(FB.dev){ FB.user = {email: FB.devEmail || 'dev@'+FB_ALLOWED_DOMAIN}; return; }
+  if(FB.dev){ FB.user = {email: FB.devEmail || 'dev@'+FB_ALLOWED_DOMAIN}; if(FB.devViewer){ FB.viewer = true; FB.viewerExpires = Date.now()+7*864e5; FB.user = {email:'', uid:'devviewer'}; } return; }
   await new Promise(res=>{
     let first = true;
     firebase.auth().onAuthStateChanged(u=>{
-      if(u && !(u.email||'').toLowerCase().endsWith('@'+FB_ALLOWED_DOMAIN)){
+      if(u && !u.isAnonymous && !(u.email||'').toLowerCase().endsWith('@'+FB_ALLOWED_DOMAIN)){
         firebase.auth().signOut(); u = null;
         alert(`회사 구글 계정(@${FB_ALLOWED_DOMAIN})으로만 로그인할 수 있습니다.`);
       }
@@ -1308,6 +1314,27 @@ async function fbInit_(){
       if(first){ first = false; res(); }
     });
   });
+  // 회사 계정으로 로그인돼 있으면 링크와 상관없이 원래대로. 아니면 조회용 링크로(익명 로그인 → 열쇠 등록)
+  if(FB.user && FB.user.isAnonymous && !FB.viewRaw){ try{ await firebase.auth().signOut(); }catch(e){} FB.user = null; }
+  if((!FB.user || FB.user.isAnonymous) && FB.viewRaw) await fbEnterViewer_();
+}
+async function fbEnterViewer_(){
+  const [key, expStr] = FB.viewRaw.split('.'), exp = Number(expStr);
+  try{
+    if(!(exp > Date.now())) throw Error('expired');
+    let u = firebase.auth().currentUser;
+    if(!u || !u.isAnonymous) u = (await firebase.auth().signInAnonymously()).user;
+    // 들어올 때마다 등록을 갱신(= 마지막 접속 기록). 열쇠·만료일이 지금 링크와 다르면 서버 규칙이 거부
+    await FB.db.doc(FB.base+'/viewers/'+u.uid).set({key, expiresAt: firebase.firestore.Timestamp.fromMillis(exp), createdAt: fbTs_(), ua: navigator.userAgent.slice(0,150)});
+    FB.viewer = true; FB.viewerExpires = exp; FB.user = {email:'', uid:u.uid, isAnonymous:true};
+    try{ localStorage.setItem('ppe_view_key', FB.viewRaw); }catch(e){}
+    if(/view=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search);
+  }catch(e){
+    console.warn('[조회용 링크 사용 불가]', e);
+    FB.viewer = false; FB.user = null; FB.viewerError = e;
+    try{ localStorage.removeItem('ppe_view_key'); }catch(_){}
+    try{ if(firebase.auth().currentUser && firebase.auth().currentUser.isAnonymous) await firebase.auth().signOut(); }catch(_){}
+  }
 }
 async function fbSignIn_(){
   const p = new firebase.auth.GoogleAuthProvider();
@@ -1364,7 +1391,7 @@ function fbAttach_(){
     cfgDone(2); fbConfigChanged_();
   }, onErr('config')));
   fbAttachActivity_(onErr('activity'));
-  FB.rtdb.ref(FB.base+'/presence').on('value', s=>{
+  if(!FB.viewer) FB.rtdb.ref(FB.base+'/presence').on('value', s=>{
     FB.presence = Object.values(s.val()||{});
     if(typeof handlePresenceResponse_==='function' && typeof PRESENCE!=='undefined') handlePresenceResponse_({presence:FB.presence});
   }, err=>console.error('[접속 표시 구독 오류]', err));
@@ -1518,6 +1545,7 @@ async function fbSaveConfig_(b){
 // 접속 표시: 바뀔 때만 올리고, 창을 닫거나 연결이 끊기면 서버가 자동으로 지운다(onDisconnect).
 let fbPresenceLast = '';
 function fbSetPresence_(p){
+  if(FB.viewer) return;
   const key = JSON.stringify([p.taskId, p.mode, p.userId, p.name]);
   if(key===fbPresenceLast) return;
   fbPresenceLast = key;
@@ -3329,6 +3357,7 @@ function resolveIdentity_(){
   currentUserId = linked ? linked.id : null;
   IS_GUEST = !linked;
   document.body.classList.toggle('guest-mode', IS_GUEST);
+  renderViewerBanner_();
   renderLoginGate_();
   renderUserSwitcher();
   applyMenuPermissions();
@@ -3337,13 +3366,59 @@ function resolveIdentity_(){
   let skipped = false; try{ skipped = sessionStorage.getItem('ppe_guest_chosen')===email; }catch(e){}
   if(!linked && email && boardSync.everConnected && !needsLoginGate_() && !skipped) openAccountPicker_();
 }
+// 조회용 링크로 들어온 사람: 화면 위에 안내(수정 불가 — 서버 규칙도 쓰기를 거부)
+function renderViewerBanner_(){
+  document.body.classList.toggle('viewer-mode', !!FB.viewer);
+  let b = document.getElementById('viewerBanner');
+  if(!FB.viewer){ if(b) b.remove(); return; }
+  if(!b){ b = document.createElement('div'); b.id = 'viewerBanner'; document.body.appendChild(b); }
+  const d = new Date(FB.viewerExpires), p = n=>String(n).padStart(2,'0');
+  b.textContent = `🔗 조회용 링크로 보는 중 — 수정할 수 없습니다 · ${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}까지`;
+}
+// 기본 설정 > 조회용 링크 (관리자만): 링크 만들기·끄기·복사, 접속 기록
+function shareAdmin_(){ return FB.on && !FB.viewer && (isBoardAdmin_() || fbIsSuperAdmin_()); }
+async function renderShareSettings(){
+  const body = document.getElementById('settingsBody');
+  if(!shareAdmin_()){ body.innerHTML = `<div class="panel" style="max-width:640px;"><h3>조회용 링크</h3><p class="settings-desc">관리자만 만들 수 있습니다.</p></div>`; return; }
+  body.innerHTML = `<div class="panel" style="max-width:720px;"><h3>조회용 링크</h3><p class="settings-desc">로그인 없이 이 링크로 들어온 사람은 보드를 <b>보기만</b> 할 수 있습니다(업무·설정 수정 불가 — 서버가 거부). 링크를 가진 사람은 누구나 볼 수 있으니 필요한 만큼만 짧게 쓰세요. 새 링크를 만들거나 끄면 예전 링크는 바로 쓸 수 없습니다.</p><div id="shareBody">불러오는 중…</div></div>`;
+  const ref = FB.db.doc(FB.base+'/share/link');
+  let cur = null; try{ const s = await ref.get(); if(s.exists) cur = s.data(); }catch(e){ document.getElementById('shareBody').textContent = '불러오지 못했습니다: '+(e.message||e); return; }
+  const exp = cur && cur.expiresAt ? cur.expiresAt.toMillis() : 0, alive = exp > Date.now();
+  const link = alive ? location.origin + location.pathname + '#view=' + cur.key + '.' + exp : '';
+  const fmt = ms=>{ const d=new Date(ms), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
+  let logs = []; try{ logs = (await FB.db.collection(FB.base+'/viewers').orderBy('createdAt','desc').limit(50).get()).docs.map(d=>d.data()); }catch(e){}
+  const browser = ua=> /Edg\//.test(ua)?'Edge':/Chrome\//.test(ua)?'Chrome':/Firefox\//.test(ua)?'Firefox':/Safari\//.test(ua)?'Safari':'기타';
+  const os = ua=> /Windows/.test(ua)?'Windows':/Android/.test(ua)?'Android':/iPhone|iPad/.test(ua)?'iOS':/Mac OS/.test(ua)?'Mac':'';
+  document.getElementById('shareBody').innerHTML = `
+    ${alive ? `<div class="settings-item-row" style="flex-wrap:wrap; gap:8px;"><input type="text" id="shareLink" readonly value="${escapeHtml(link)}" style="flex:1; min-width:280px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px;">
+        <button class="btn" id="shareCopy">링크 복사</button><button class="btn btn-ghost" id="shareOff">링크 끄기</button></div>
+      <p class="settings-desc">만료: <b>${fmt(exp)}</b> · 만든 사람 ${escapeHtml(cur.createdBy||'-')}</p>`
+      : `<p class="settings-desc">${cur ? '링크가 만료되었습니다.' : '켜져 있는 링크가 없습니다.'}</p>`}
+    <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+      <select id="shareDays" class="filt"><option value="1">1일</option><option value="3">3일</option><option value="7" selected>7일</option><option value="30">30일</option></select>
+      <button class="btn" id="shareNew">${alive ? '새 링크로 바꾸기 (예전 링크 무효)' : '링크 만들기'}</button>
+    </div>
+    <h3 style="margin-top:22px;">접속 기록 <span class="muted-cell">(최근 50건 · 들어올 때마다 갱신)</span></h3>
+    <div class="settings-item-list">${logs.length ? logs.map(l=>`<div class="settings-item-row"><span>${l.createdAt ? fmt(l.createdAt.toMillis()) : '-'} · ${browser(l.ua||'')} ${os(l.ua||'')}</span><span class="muted-cell">${alive && l.key===cur.key ? '지금 링크' : '예전 링크'}</span></div>`).join('') : '<div class="comment-empty">아직 접속 기록이 없습니다.</div>'}</div>`;
+  const copy = document.getElementById('shareCopy'); if(copy) copy.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(link); copy.textContent = '복사됨'; }catch(e){ prompt('아래 링크를 복사하세요', link); } });
+  const off = document.getElementById('shareOff'); if(off) off.addEventListener('click', async ()=>{ if(!confirm('조회용 링크를 끌까요? 지금 링크로 보고 있는 사람도 바로 볼 수 없게 됩니다.')) return; await ref.delete(); renderShareSettings(); });
+  document.getElementById('shareNew').addEventListener('click', async ()=>{
+    if(alive && !confirm('새 링크로 바꾸면 지금 링크는 바로 쓸 수 없습니다. 계속할까요?')) return;
+    const bytes = crypto.getRandomValues(new Uint8Array(24)); // 192비트 무작위 열쇠
+    const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    const days = +document.getElementById('shareDays').value;
+    const expMs = Math.floor((Date.now() + days*864e5)/1000)*1000;
+    await ref.set({key, expiresAt: firebase.firestore.Timestamp.fromMillis(expMs), createdBy: loginEmail_(), createdAt: fbTs_()});
+    renderShareSettings();
+  });
+}
 function renderLoginGate_(){
   let g = document.getElementById('loginGate');
   if(!needsLoginGate_()){ if(g) g.remove(); return; }
   if(!g){
     g = document.createElement('div'); g.id = 'loginGate'; g.setAttribute('role','dialog'); g.setAttribute('aria-modal','true');
     g.innerHTML = `<div class="login-gate-card"><div class="login-gate-logo">📋</div><h2>생산기술팀 업무 프로세스 보드</h2>
-      <p>회사 구글 계정(@intelliantech.com)으로 로그인해야 볼 수 있습니다.</p>
+      <p>${FB.viewerError ? '조회용 링크가 만료되었거나 관리자가 링크를 껐습니다. 새 링크를 받거나 회사 계정으로 로그인해 주세요.' : '회사 구글 계정(@intelliantech.com)으로 로그인해야 볼 수 있습니다.'}</p>
       <button type="button" class="btn" id="loginGateBtn">🏢 회사 계정으로 로그인</button></div>`;
     document.body.appendChild(g);
     g.querySelector('#loginGateBtn').addEventListener('click', goToLoginPortal_);
@@ -5781,6 +5856,7 @@ function renderSettings(){
       <button class="settings-tab ${settingsTab==='users'?'active':''}" data-tab="users">팀원 관리</button>
       <button class="settings-tab ${settingsTab==='checklist'?'active':''}" data-tab="checklist">체크리스트</button>
       <button class="settings-tab ${settingsTab==='printers'?'active':''}" data-tab="printers">라벨 프린터</button>
+      ${shareAdmin_() ? `<button class="settings-tab ${settingsTab==='share'?'active':''}" data-tab="share">조회용 링크</button>` : ''}
       <button class="settings-tab ${settingsTab==='sync'?'active':''}" data-tab="sync">PC 간 공유 설정</button>
       <button class="settings-tab" data-tab="labelrules">라벨 변환 규칙 ↗</button>
     </div>
@@ -5800,6 +5876,7 @@ function renderSettings(){
   if(settingsTab==='users') renderUserSettings();
   if(settingsTab==='checklist') renderChecklistSettings();
   if(settingsTab==='printers') renderPrinterSettings();
+  if(settingsTab==='share') renderShareSettings();
 }
 
 // 라벨 프린터 목록: 표에서 바로 고치면 저장(팀원 누구나). 엑셀 표를 붙여 넣어 한 번에 바꿀 수도 있음.
