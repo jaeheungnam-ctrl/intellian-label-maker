@@ -1330,7 +1330,8 @@ body.guest-mode #addPreAppliedBtn{display:none !important;}
       </div>
       <div class="user-box" id="shareBox" style="display:none">
         <div class="user-box-label">조회용 링크</div>
-        <button class="resetbtn" id="shareQuickBtn" style="margin-top:0">🔗 조회용 링크 만들기·복사</button>
+        <select id="shareQuickPage" class="resetbtn" style="margin-top:0; cursor:pointer;" title="링크를 연 사람이 처음 볼 화면"></select>
+        <button class="resetbtn" id="shareQuickBtn">🔗 조회용 링크 만들기·복사</button>
         <button class="resetbtn" id="shareManageBtn">관리 (만료·끄기·접속 기록)</button>
       </div>
       <div class="sync" id="syncIndicator"><span class="led"></span><span id="syncText">동기화됨</span></div>
@@ -1402,7 +1403,9 @@ const FB = (()=>{
   // 조회용 링크: 주소 끝 #view=열쇠.만료시각(ms) — #뒤는 서버·다른 사이트로 전달되지 않음. 한 번 들어오면 이 PC에 기억(주소창에서는 지움)
   let viewRaw = ((location.hash.match(/(?:^#|&)view=([A-Za-z0-9_-]{20,}\.\d{10,})/)||[])[1]) || '';
   if(!viewRaw){ try{ viewRaw = localStorage.getItem('ppe_view_key') || ''; }catch(e){} }
-  return { wanted, on:false, dev:!!devRun, base: devRun ? 'devtest/'+devRun : 'boards/main', devEmail:(q.get('as')||'').toLowerCase(),
+  const hp = new URLSearchParams(location.hash.replace(/^#/, '')); // 링크를 만든 사람이 고른 첫 화면(없으면 대시보드 — 예전 링크와 같음)
+  const viewPage = (hp.get('page') || '').replace(/[^a-z_]/gi, ''), viewEs = hp.get('es') || '';
+  return { viewPage, viewEs, wanted, on:false, dev:!!devRun, base: devRun ? 'devtest/'+devRun : 'boards/main', devEmail:(q.get('as')||'').toLowerCase(),
     devViewer: !!devRun && q.get('view')==='1', viewRaw, viewer:false, viewerExpires:0, viewerError:null,
     mirrorSheets: FB_DEFAULT_ON && !devRun, db:null, rtdb:null, user:null, mirror:null, rev:0, presence:[],
     config:{users:[], models:[], checklists:{}, printers:[]}, tasksSynced:false, configSynced:0, fsOnline:false, listenErr:null, attached:false, unsub:[] };
@@ -3089,6 +3092,9 @@ async function clearFilters(){
   renderCurrent();
 }
 let currentView = 'dashboard';
+if(FB.viewPage && FB.viewPage !== 'settings' && document.querySelector('#navList .navbtn[data-view="' + FB.viewPage + '"]')){
+  currentView = FB.viewPage; document.querySelectorAll('.navbtn').forEach(b=> b.classList.toggle('active', b.dataset.view === currentView));
+}
 let collapsedGroups = {};
 let listSort = {key:'due', dir:'asc'}; // 전체 목록 정렬 상태 — 컬럼 헤더 클릭으로 바뀜
 
@@ -3503,6 +3509,20 @@ function renderViewerBanner_(){
   const d = new Date(FB.viewerExpires), p = n=>String(n).padStart(2,'0');
   b.textContent = `🔗 조회용 링크로 보는 중 — 수정할 수 없습니다 · ${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}까지`;
 }
+// 조회용 링크 주소 — page가 대시보드가 아니면 "&page=화면"을 붙여 그 화면부터 열리게(설계변경 현황은 지금 고른 탭·기준·기간도 함께)
+function shareLinkUrl_(key, exp, page){
+  let u = location.origin + location.pathname + '#view=' + key + '.' + exp;
+  if(page && page !== 'dashboard'){
+    u += '&page=' + encodeURIComponent(page);
+    if(page === 'ecostats' && ecsFrom_) u += '&es=' + [ecsTab_, ecsBasis_, ecsFrom_, ecsTo_].join('.');
+  }
+  return u;
+}
+function shareNavLabel_(view){ const b = document.querySelector('#navList .navbtn[data-view="' + view + '"]'); if(!b) return view; const c = b.cloneNode(true); c.querySelectorAll('.nav-badge, .nav-ico').forEach(x=> x.remove()); return c.textContent.trim(); }
+function shareTargetOptions_(withCurrent, selected, prefix){ prefix = prefix || '';
+  const views = [...document.querySelectorAll('#navList .navbtn')].filter(b=> !b.classList.contains('nav-hidden') && b.style.display !== 'none' && b.dataset.view !== 'settings').map(b=> b.dataset.view);
+  return (withCurrent ? '<option value="">' + prefix + '지금 보는 화면</option>' : '') + views.map(v=> '<option value="' + v + '"' + (v === selected ? ' selected' : '') + '>' + prefix + escapeHtml(shareNavLabel_(v)) + '</option>').join('');
+}
 // 기본 설정 > 조회용 링크 (관리자만): 링크 만들기·끄기·복사, 접속 기록
 function shareAdmin_(){ return FB.on && !FB.viewer && (isBoardAdmin_() || fbIsSuperAdmin_()); }
 async function renderShareSettings(){
@@ -3512,7 +3532,7 @@ async function renderShareSettings(){
   const ref = FB.db.doc(FB.base+'/share/link');
   let cur = null; try{ const s = await ref.get(); if(s.exists) cur = s.data(); }catch(e){ document.getElementById('shareBody').textContent = '불러오지 못했습니다: '+(e.message||e); return; }
   const exp = cur && cur.expiresAt ? cur.expiresAt.toMillis() : 0, alive = exp > Date.now();
-  const link = alive ? location.origin + location.pathname + '#view=' + cur.key + '.' + exp : '';
+  let link = alive ? shareLinkUrl_(cur.key, exp, 'dashboard') : '';
   const fmt = ms=>{ const d=new Date(ms), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; };
   let logs = []; try{ logs = (await FB.db.collection(FB.base+'/viewers').orderBy('createdAt','desc').limit(50).get()).docs.map(d=>d.data()); }catch(e){}
   const browser = ua=> /Edg\//.test(ua)?'Edge':/Chrome\//.test(ua)?'Chrome':/Firefox\//.test(ua)?'Firefox':/Safari\//.test(ua)?'Safari':'기타';
@@ -3520,6 +3540,7 @@ async function renderShareSettings(){
   document.getElementById('shareBody').innerHTML = `
     ${alive ? `<div class="settings-item-row" style="flex-wrap:wrap; gap:8px;"><input type="text" id="shareLink" readonly value="${escapeHtml(link)}" style="flex:1; min-width:280px; border:1px solid var(--border); border-radius:10px; padding:8px 10px; font-size:12px;">
         <button class="btn" id="shareCopy">링크 복사</button><button class="btn btn-ghost" id="shareOff">링크 끄기</button></div>
+      <div class="settings-item-row" style="gap:8px;"><span>받는 사람이 처음 볼 화면</span><select id="sharePageSel" class="filt">${shareTargetOptions_(false, 'dashboard')}</select></div>
       <p class="settings-desc">만료: <b>${fmt(exp)}</b> · 만든 사람 ${escapeHtml(cur.createdBy||'-')}</p>`
       : `<p class="settings-desc">${cur ? '링크가 만료되었습니다.' : '켜져 있는 링크가 없습니다.'}</p>`}
     <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
@@ -3528,6 +3549,8 @@ async function renderShareSettings(){
     </div>
     <h3 style="margin-top:22px;">접속 기록 <span class="muted-cell">(최근 50건 · 들어올 때마다 갱신)</span></h3>
     <div class="settings-item-list">${logs.length ? logs.map(l=>`<div class="settings-item-row"><span>${l.createdAt ? fmt(l.createdAt.toMillis()) : '-'} · ${browser(l.ua||'')} ${os(l.ua||'')}</span><span class="muted-cell">${alive && l.key===cur.key ? '지금 링크' : '예전 링크'}</span></div>`).join('') : '<div class="comment-empty">아직 접속 기록이 없습니다.</div>'}</div>`;
+  const pageSel = document.getElementById('sharePageSel');
+  if(pageSel) pageSel.addEventListener('change', ()=>{ link = shareLinkUrl_(cur.key, exp, pageSel.value); document.getElementById('shareLink').value = link; const c = document.getElementById('shareCopy'); if(c) c.textContent = '링크 복사'; });
   const copy = document.getElementById('shareCopy'); if(copy) copy.addEventListener('click', async ()=>{ try{ await navigator.clipboard.writeText(link); copy.textContent = '복사됨'; }catch(e){ prompt('아래 링크를 복사하세요', link); } });
   const off = document.getElementById('shareOff'); if(off) off.addEventListener('click', async ()=>{ if(!confirm('조회용 링크를 끌까요? 지금 링크로 보고 있는 사람도 바로 볼 수 없게 됩니다.')) return; await ref.delete(); renderShareSettings(); });
   document.getElementById('shareNew').addEventListener('click', async ()=>{
@@ -3669,13 +3692,19 @@ async function shareQuickCopy_(){
       await ref.set({key, expiresAt: firebase.firestore.Timestamp.fromMillis(exp), createdBy: loginEmail_(), createdAt: fbTs_()});
       cur = {key};
     }
-    const link = location.origin + location.pathname + '#view=' + cur.key + '.' + exp;
+    const sel = document.getElementById('shareQuickPage'), page = (sel && sel.value) || (currentView === 'settings' ? 'dashboard' : currentView);
+    const link = shareLinkUrl_(cur.key, exp, page);
     const d = new Date(exp), p = n=>String(n).padStart(2,'0'), until = `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-    try{ await navigator.clipboard.writeText(link); btn.textContent = `✅ 복사됨 (${until}까지)`; setTimeout(()=>{ btn.textContent = '🔗 조회용 링크 만들기·복사'; }, 2500); }
+    try{ await navigator.clipboard.writeText(link); btn.textContent = `✅ 복사됨 · ${shareNavLabel_(page)} (${until}까지)`; setTimeout(()=>{ btn.textContent = '🔗 조회용 링크 만들기·복사'; }, 2500); }
     catch(e){ prompt('아래 링크를 복사하세요 (' + until + '까지)', link); }
   }catch(e){ alert('조회용 링크를 불러오지 못했습니다: ' + (e.message || e)); }
 }
 document.getElementById('shareQuickBtn')?.addEventListener('click', shareQuickCopy_);
+// 고르는 칸은 열 때마다 지금 메뉴 목록(순서·숨김 반영)으로 채운다 — 기본은 "지금 보는 화면"
+function shareQuickFill_(){ const sel = document.getElementById('shareQuickPage'); if(!sel) return; const v = sel.value; sel.innerHTML = shareTargetOptions_(true, v, '열릴 화면: '); sel.value = v; if(sel.selectedIndex < 0) sel.value = ''; }
+document.getElementById('shareQuickPage')?.addEventListener('focus', shareQuickFill_);
+document.getElementById('shareQuickPage')?.addEventListener('mousedown', shareQuickFill_);
+shareQuickFill_();
 document.getElementById('shareManageBtn')?.addEventListener('click', ()=>{
   settingsTab = 'share'; currentView = 'settings';
   document.querySelectorAll('.navbtn').forEach(b=> b.classList.toggle('active', b.dataset.view==='settings'));
@@ -4940,6 +4969,8 @@ function renderCurrent(){
 // 차트는 카드의 실제 픽셀 크기로 그린다(viewBox로 늘리면 글씨·막대가 같이 커짐). 창 크기가 바뀌면 애니메이션 없이 다시 그림.
 var ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
 const ECS_TABS_ = {ECO:'ECN', MDM:'신규코드등록'};
+(()=>{ const p = (FB.viewEs || '').split('.'), ymd = /^\d{4}-\d{2}-\d{2}$/; if(p.length !== 4) return;
+  if(ECS_TABS_[p[0]]) ecsTab_ = p[0]; if(p[1] === 'recv' || p[1] === 'end') ecsBasis_ = p[1]; if(ymd.test(p[2])) ecsFrom_ = p[2]; if(ymd.test(p[3])) ecsTo_ = p[3]; })();
 const ECS_HIST_ = [['0~7일',0,7],['8~14일',8,14],['15~30일',15,30],['31~60일',31,60],['61~90일',61,90],['91일+',91,1e9]];
 const ECS_AGE_ = [['30일 이내',0,30],['31~60일',31,60],['61~90일',61,90],['91~180일',91,180],['180일 넘음',181,1e9]];
 function ecsYmd_(d){ return d ? d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') : ''; }
