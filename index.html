@@ -3354,6 +3354,7 @@ function applyMenuLayout_(){
   const p = menuPrefs_(), hidden = new Set(p.hidden||[]);
   const order = [...(p.order||[]).filter(v=>DEFAULT_MENU_ORDER.includes(v)), ...DEFAULT_MENU_ORDER.filter(v=>!(p.order||[]).includes(v))];
   order.forEach(v=>{ const b = list.querySelector(`.navbtn[data-view="${v}"]`); b.classList.toggle('nav-hidden', hidden.has(v)); list.appendChild(b); });
+  if(typeof shareQuickFill_ === 'function') shareQuickFill_(); // 조회용 링크 "열릴 화면" 목록도 같은 순서·숨김으로
   // 보고 있던 화면의 메뉴를 숨겼으면 보이는 첫 메뉴로 옮긴다.
   const active = list.querySelector('.navbtn.active');
   if(active && active.classList.contains('nav-hidden')){
@@ -3668,7 +3669,7 @@ function renderUserSwitcher(){
   const me = currentUser(), email = loginEmail_();
   who.textContent = me ? me.name : (email ? 'GUEST · 조회만 — 내 계정 연결' : '로그인 필요');
   who.title = email ? `${email}${me?' 로 로그인됨 · 눌러서 내 이름·색상 변경':' · 눌러서 내 계정 연결'}` : '';
-  const shareBox = document.getElementById('shareBox'); if(shareBox) shareBox.style.display = shareAdmin_() ? '' : 'none';
+  const shareBox = document.getElementById('shareBox'); if(shareBox){ shareBox.style.display = shareAdmin_() ? '' : 'none'; if(shareAdmin_() && typeof shareQuickFill_ === 'function') shareQuickFill_(); }
   const mgr = document.getElementById('manageUsersBtn');
   if(mgr){ mgr.style.display = me ? '' : 'none'; mgr.textContent = (me && me.isAdmin) ? '+ 팀원 관리' : '내 이름·색상 변경'; }
   avatar.textContent = me ? initials(me.name) : '?';
@@ -3700,10 +3701,8 @@ async function shareQuickCopy_(){
   }catch(e){ alert('조회용 링크를 불러오지 못했습니다: ' + (e.message || e)); }
 }
 document.getElementById('shareQuickBtn')?.addEventListener('click', shareQuickCopy_);
-// 고르는 칸은 열 때마다 지금 메뉴 목록(순서·숨김 반영)으로 채운다 — 기본은 "지금 보는 화면"
+// 고르는 칸은 메뉴 배치가 바뀔 때·상자를 보여 줄 때 채운다(누르는 순간 다시 채우면 고른 값이 풀리는 브라우저가 있음) — 기본은 "지금 보는 화면"
 function shareQuickFill_(){ const sel = document.getElementById('shareQuickPage'); if(!sel) return; const v = sel.value; sel.innerHTML = shareTargetOptions_(true, v, '열릴 화면: '); sel.value = v; if(sel.selectedIndex < 0) sel.value = ''; }
-document.getElementById('shareQuickPage')?.addEventListener('focus', shareQuickFill_);
-document.getElementById('shareQuickPage')?.addEventListener('mousedown', shareQuickFill_);
 shareQuickFill_();
 document.getElementById('shareManageBtn')?.addEventListener('click', ()=>{
   settingsTab = 'share'; currentView = 'settings';
