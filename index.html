@@ -6957,7 +6957,7 @@ async function handleExcelImport(file){
 // 한 번호 밑에 활동이 여러 줄이므로 번호별로 묶는다(사용자 확인):
 //  · 대상: 구분이 ECN(E00…)·신규코드등록(NPO…)인 건. 전부 취소된 건은 뺀다.
 //  · 수신일 = "업무 할당" 활동의 수신일(없으면 가장 빠른 수신일) = 우리 팀에 도달한 날
-//  · 완료일 = 취소 뺀 모든 활동이 완료됐을 때 가장 늦은 완료일. 하나라도 남았으면 미완료(남은 건)
+//  · 완료일 = 취소·작업 지도서 개정·Packing List 검토를 뺀 활동이 모두 완료됐을 때 가장 늦은 완료일. 하나라도 남았으면 미완료(남은 건)
 //  · 보드에 이미 있는 건: 수신일·완료일만 바꾼다(상태·제목·담당자 등은 그대로). 보드 상태와 PLM 완료 여부가 다르면 목록으로 알려 준다.
 //  · 보드에 없는 건: 새로 등록(담당자 = 첫 번째 팀원(u1), MODEL 미분류, 완료면 체크 항목 모두 체크).
 function plmOwner_(){ const u = USERS.find(u=> u.id === 'u1') || USERS.find(u=> /^nam$/i.test(u.name||'')); return u ? u.name : 'Nam'; } // 사용자 지정: NAM(USER1)
@@ -6979,9 +6979,11 @@ function buildPlmImport_(rows){
     const assign = acts.find(r=> /업무 할당/.test(r['활동']) && d(r['수신일']));
     const recvs = acts.map(r=> d(r['수신일'])).filter(Boolean).sort();
     const receivedDate = assign ? d(assign['수신일']) : (recvs[0] || '');
-    const left = acts.filter(r=> String(r['활동상태']).trim() !== '완료됨');
+    // 작업 지도서 개정·Packing List 검토는 끝나지 않아도 완료로 본다 — STEP3(BOM 변경 및 제품 발주 통제)까지가 완료 기준(사용자 확인 2026-10-19)
+    const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])));
+    const left = core.filter(r=> String(r['활동상태']).trim() !== '완료됨');
     const done = !left.length;
-    const endDate = done ? (acts.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
+    const endDate = done ? (core.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
     const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: kind === 'ECN' ? 'ECO' : 'MDM', receivedDate, endDate, done,
       left: left.map(r=> `${String(r['활동']).trim()}(${String(r['활동상태']).trim()})`)};
     const existing = TASKS.find(t=> t.docNumber === doc);
@@ -7005,7 +7007,7 @@ function openPlmReview_(res){
     <div class="modal-head">
       <h2>PLM 활동 엑셀 반영 확인</h2>
       <div style="font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6;">
-        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일, 완료일 = 모든 활동이 끝난 날(가장 늦은 완료일).<br>
+        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
         · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
         · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
         ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
