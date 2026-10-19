@@ -775,57 +775,111 @@
 .dq-tile-detail{margin-top:14px;}
 
 .dq-grid{display:grid; grid-template-columns:1.3fr 1fr; gap:16px;}
-/* 설계변경 현황 */
-.ecs-ctrl{display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; margin-bottom:16px;}
-.ecs-seg{display:inline-flex; background:var(--paper); border:1px solid var(--border); border-radius:999px; padding:3px; gap:2px;}
-.ecs-seg button{border:0; background:transparent; color:var(--muted); font:inherit; font-size:12.5px; font-weight:700; padding:6px 14px; border-radius:999px; cursor:pointer;}
-.ecs-seg button.on{background:var(--surface); color:var(--ink); box-shadow:var(--shadow-1);}
-.ecs-range{display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--muted);}
-.ecs-range input[type=date]{font:inherit; font-size:12.5px; padding:5px 8px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink);}
-.ecs-quick{display:inline-flex; gap:4px;}
-.ecs-quick button{font:inherit; font-size:11.5px; padding:4px 10px; border:1px solid var(--border); border-radius:999px; background:var(--surface); color:var(--muted); cursor:pointer;}
-.ecs-quick button:hover{color:var(--ink); border-color:var(--muted-2);}
-.ecs-ctrl .ecs-files{margin-left:auto; display:inline-flex; gap:8px;}
-.ecs-kpis{display:grid; grid-template-columns:200px repeat(3, minmax(120px,1fr)); gap:14px; margin-bottom:16px;}
-.ecs-kpis .dq-tile{cursor:default;}
-.ecs-kpi2{display:grid; grid-template-columns:repeat(3, minmax(120px,1fr)); gap:14px; grid-column:2 / -1;}
-.ecs-ringcard{grid-row:span 2; background:var(--surface); border-radius:20px; box-shadow:var(--shadow-1); display:flex; flex-direction:column; align-items:center; justify-content:center; padding:14px; gap:8px;}
-.ecs-ringwrap{position:relative; width:140px; height:140px;}
-.ecs-ringwrap svg{width:140px; height:140px; transform:rotate(-90deg);}
-.ecs-ringwrap .lbl{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;}
-.ecs-ringwrap .lbl strong{font-family:var(--font-display); font-size:30px; font-weight:800; line-height:1;}
-.ecs-ringwrap .lbl span{font-size:11px; color:var(--muted); margin-top:4px;}
-.ecs-tile-sub{display:block; font-size:11px; color:var(--muted-2); margin-top:2px; white-space:nowrap;}
-.ecs-grid{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px;}
-.ecs-grid .dash-panel{margin-bottom:0;}
-.ecs-grid .wide{grid-column:1 / -1;}
-@media(max-width:1000px){ .ecs-grid{grid-template-columns:1fr;} .ecs-kpis{grid-template-columns:1fr 1fr;} .ecs-ringcard{grid-row:auto; grid-column:1 / -1;} .ecs-kpi2{grid-column:1 / -1;} }
-.ecs-svg{width:100%; height:auto; display:block; overflow:visible;}
-.ecs-svg text{font-size:11px; fill:var(--muted);}
-.ecs-svg .v{font-size:10.5px; fill:var(--ink); font-weight:700;}
-.ecs-bar{transform-box:fill-box; transform-origin:center bottom;}
-.ecs-legend{display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:8px;}
-.ecs-legend i{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px;}
-.ecs-hb{display:grid; grid-template-columns:minmax(80px,auto) 1fr 64px; align-items:center; gap:10px; font-size:12.5px; margin:7px 0;}
-.ecs-hb.link{cursor:pointer; border-radius:8px;} .ecs-hb.link:hover{background:var(--paper);}
-.ecs-hb .nm{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:260px;}
-.ecs-hb .tr{background:var(--paper); border-radius:999px; height:12px; overflow:hidden;}
-.ecs-hb .fl{height:100%; border-radius:999px; transform-origin:left center;}
-.ecs-hb .ct{text-align:right; font-weight:700; font-variant-numeric:tabular-nums;}
-.ecs-table{width:100%; border-collapse:collapse; font-size:12.5px;}
-.ecs-table th,.ecs-table td{padding:7px 8px; border-bottom:1px solid var(--border-soft); text-align:left; vertical-align:top;}
-.ecs-table th{font-size:11px; color:var(--muted); font-weight:700; position:sticky; top:0; background:var(--surface);}
-.ecs-table tr[data-id]{cursor:pointer;} .ecs-table tr[data-id]:hover td{background:var(--paper);}
-.ecs-table .num{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap;}
-.ecs-table .mono{font-family:"SFMono-Regular", Consolas, monospace; white-space:nowrap;}
-.ecs-scroll{max-height:420px; overflow:auto;}
-.ecs-empty{color:var(--muted); font-size:12.5px; padding:10px 0;}
+/* 설계변경 현황 — 벤토 그리드 · 차트 색은 dataviz 기본 팔레트(검증됨: 파랑·청록 light/dark PASS) */
+.ecs-root{--ecs-s1:#2a78d6; --ecs-s2:#1baf7a; --ecs-s3:#eb6834; --ecs-s4:#6250d6; --ecs-crit:#e34948;
+  --ecs-a1:#fde0cc; --ecs-a2:#f9b98f; --ecs-a3:#f08a52; --ecs-a4:#d9622a; --ecs-a5:#a8441a; --ecs-grid:color-mix(in srgb, var(--ink) 8%, transparent);}
+@media (prefers-color-scheme: dark){ :root:where(:not([data-theme="light"])) .ecs-root{--ecs-s1:#3987e5; --ecs-s2:#199e70; --ecs-s3:#d95926; --ecs-s4:#9085e9; --ecs-crit:#e66767;
+  --ecs-a1:#5c2e18; --ecs-a2:#8a4320; --ecs-a3:#c25a28; --ecs-a4:#e9793f; --ecs-a5:#ffa36e;} }
+:root[data-theme="dark"] .ecs-root{--ecs-s1:#3987e5; --ecs-s2:#199e70; --ecs-s3:#d95926; --ecs-s4:#9085e9; --ecs-crit:#e66767;
+  --ecs-a1:#5c2e18; --ecs-a2:#8a4320; --ecs-a3:#c25a28; --ecs-a4:#e9793f; --ecs-a5:#ffa36e;}
+.ecs-root{display:flex; flex-direction:column; gap:16px;}
+.ecs-bar{display:flex; flex-wrap:wrap; align-items:center; gap:10px;}
+.ecs-seg{display:inline-flex; padding:4px; gap:2px; border-radius:999px; background:color-mix(in srgb, var(--ink) 6%, transparent);}
+.ecs-seg button{border:0; background:transparent; color:var(--muted); font:inherit; font-size:13px; font-weight:600; padding:7px 16px; border-radius:999px; cursor:pointer; transition:background .15s, color .15s;}
+.ecs-seg button:hover{color:var(--ink);}
+.ecs-seg button.on{background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08), 0 1px 8px rgba(0,0,0,.05);}
+.ecs-date{display:inline-flex; align-items:center; gap:4px; padding:4px 6px 4px 12px; border-radius:999px; background:var(--surface); border:1px solid var(--border-soft); font-size:13px; color:var(--muted);}
+.ecs-date input{font:inherit; font-size:13px; border:0; background:transparent; color:var(--ink); padding:4px 2px; font-variant-numeric:tabular-nums;}
+.ecs-chips{display:inline-flex; gap:4px;}
+.ecs-chips button{font:inherit; font-size:12px; font-weight:600; padding:6px 12px; border-radius:999px; border:1px solid transparent; background:transparent; color:var(--muted); cursor:pointer;}
+.ecs-chips button:hover{background:color-mix(in srgb, var(--ink) 6%, transparent); color:var(--ink);}
+.ecs-bar .ecs-out{margin-left:auto; display:inline-flex; gap:8px;}
+.ecs-out button{display:inline-flex; align-items:center; gap:6px; font:inherit; font-size:13px; font-weight:600; padding:8px 14px; border-radius:999px; border:1px solid var(--border-soft); background:var(--surface); color:var(--ink); cursor:pointer;}
+.ecs-out button:hover{border-color:var(--muted-2);}
+.ecs-out svg{width:15px; height:15px;}
+.ecs-scope{font-size:12px; color:var(--muted); margin-top:-6px;}
+.ecs-bento{display:grid; grid-template-columns:repeat(12, minmax(0,1fr)); gap:16px;}
+.ecs-card{grid-column:span 12; background:var(--surface); border:1px solid var(--border-soft); border-radius:22px; padding:20px 22px; box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12); min-width:0; position:relative;}
+.c3{grid-column:span 3;} .c4{grid-column:span 4;} .c5{grid-column:span 5;} .c6{grid-column:span 6;} .c7{grid-column:span 7;} .c8{grid-column:span 8;}
+.ecs-hd{display:flex; align-items:flex-start; gap:12px; margin-bottom:14px;}
+.ecs-hd h3{margin:0; font-size:14px; font-weight:700; letter-spacing:-.01em; color:var(--ink);}
+.ecs-hd p{margin:3px 0 0; font-size:12px; color:var(--muted);}
+.ecs-lg{margin-left:auto; display:flex; gap:12px; font-size:12px; color:var(--muted); white-space:nowrap;}
+.ecs-lg i{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:-1px;}
+.ecs-lg i.ln{height:2px; width:14px; border-radius:2px; vertical-align:3px;}
+/* 히어로 */
+.ecs-hero{display:flex; flex-direction:column; justify-content:space-between; background:linear-gradient(135deg, color-mix(in srgb, var(--ecs-s3) 12%, var(--surface)) 0%, var(--surface) 70%);}
+.ecs-eyebrow{font-size:12px; font-weight:600; color:var(--muted); letter-spacing:.02em;}
+.ecs-hero-num{display:flex; align-items:baseline; gap:6px; margin:10px 0 6px;}
+.ecs-hero-num strong{font-size:64px; line-height:1; font-weight:700; letter-spacing:-.04em; color:var(--ink);}
+.ecs-hero-num span{font-size:20px; font-weight:600; color:var(--muted);}
+.ecs-hero-sub{font-size:13px; color:var(--muted);} .ecs-hero-sub b{color:var(--ink); font-weight:700;}
+.ecs-spark{height:64px; margin-top:16px;}
+/* 숫자 타일 */
+.ecs-kpis{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:16px;}
+.ecs-kpi{background:var(--surface); border:1px solid var(--border-soft); border-radius:22px; padding:18px 20px; box-shadow:0 1px 2px rgba(0,0,0,.04), 0 8px 24px -12px rgba(0,0,0,.12); display:flex; flex-direction:column; gap:4px; min-width:0;}
+.ecs-kpi .lb{display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; color:var(--muted);}
+.ecs-kpi .lb .dot{width:8px; height:8px; border-radius:50%;}
+.ecs-kpi .vl{display:flex; align-items:baseline; gap:4px; margin-top:6px;}
+.ecs-kpi .vl strong{font-size:36px; line-height:1.05; font-weight:700; letter-spacing:-.03em; color:var(--ink);}
+.ecs-kpi .vl span{font-size:14px; font-weight:600; color:var(--muted);}
+.ecs-kpi .ft{font-size:12px; color:var(--muted); margin-top:auto; padding-top:10px;}
+.ecs-kpi .ft b{color:var(--ink);}
+.ecs-kpi .ft .crit{color:var(--ecs-crit); font-weight:700;}
+.ecs-meter{height:6px; border-radius:999px; background:color-mix(in srgb, var(--ink) 7%, transparent); overflow:hidden; margin-top:10px;}
+.ecs-meter i{display:block; height:100%; border-radius:999px; transform-origin:left center;}
+/* 차트 */
+.ecs-chart{position:relative; width:100%;}
+.ecs-chart svg{display:block; overflow:visible;}
+.ecs-chart text{font-size:11px; fill:var(--muted); font-variant-numeric:tabular-nums;}
+.ecs-chart text.lbl{fill:var(--ink); font-weight:700;}
+.ecs-col{transform-box:fill-box; transform-origin:center bottom; transition:opacity .15s;}
+.ecs-chart.hovering .ecs-col{opacity:.45;} .ecs-chart.hovering .ecs-col.hot{opacity:1;}
+.ecs-tip{position:absolute; pointer-events:none; z-index:5; min-width:140px; padding:10px 12px; border-radius:12px; background:var(--surface); border:1px solid var(--border-soft); box-shadow:0 10px 30px -8px rgba(0,0,0,.25); font-size:12px; color:var(--muted); opacity:0; transition:opacity .12s; white-space:nowrap;}
+.ecs-tip.on{opacity:1;}
+.ecs-tip .t{font-weight:700; color:var(--ink); margin-bottom:6px;}
+.ecs-tip .r{display:flex; align-items:center; gap:8px; margin-top:3px;} .ecs-tip .r i{width:12px; height:2px; border-radius:2px;} .ecs-tip .r b{color:var(--ink); font-size:13px; margin-left:auto; padding-left:14px;}
+/* 도넛·분포·순위 */
+.ecs-donut{display:flex; flex-direction:column; align-items:center; gap:14px;}
+.ecs-donut-wrap{position:relative; width:180px; height:180px;}
+.ecs-donut-wrap .ctr{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;}
+.ecs-donut-wrap .ctr strong{font-size:38px; font-weight:700; letter-spacing:-.03em; color:var(--ink); line-height:1;}
+.ecs-donut-wrap .ctr span{font-size:12px; color:var(--muted); margin-top:4px;}
+.ecs-arc{transition:opacity .15s;}
+.ecs-rows{display:flex; flex-direction:column; gap:8px; width:100%;}
+.ecs-row{display:flex; align-items:center; gap:10px; font-size:12.5px; color:var(--muted);} .ecs-row i{width:10px; height:10px; border-radius:3px; flex:none;} .ecs-row b{margin-left:auto; color:var(--ink); font-variant-numeric:tabular-nums;}
+.ecs-stack{display:flex; gap:2px; height:14px; border-radius:999px; overflow:hidden; margin:4px 0 16px;}
+.ecs-stack i{display:block; height:100%; transform-origin:left center;}
+.ecs-rank{display:flex; flex-direction:column; gap:2px;}
+.ecs-rk{display:grid; grid-template-columns:22px minmax(0,1fr) 54px; align-items:center; gap:10px; padding:7px 8px; margin:0 -8px; border-radius:10px; cursor:pointer;}
+.ecs-rk:hover{background:color-mix(in srgb, var(--ink) 5%, transparent);}
+.ecs-rk .no{font-size:12px; font-weight:700; color:var(--muted-2); text-align:center;}
+.ecs-rk .nm{min-width:0;} .ecs-rk .nm div{font-size:12.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;} .ecs-rk .nm small{font-family:"SFMono-Regular",Consolas,monospace; font-size:11px; color:var(--muted);}
+.ecs-rk .tr{grid-column:2; height:4px; border-radius:999px; background:color-mix(in srgb, var(--ink) 6%, transparent); overflow:hidden; margin-top:5px;} .ecs-rk .tr i{display:block; height:100%; border-radius:999px; background:var(--ecs-s3); transform-origin:left center;}
+.ecs-rk .dv{font-size:13px; font-weight:700; color:var(--ink); text-align:right; font-variant-numeric:tabular-nums;}
+/* 표 */
+.ecs-tbl-wrap{max-height:440px; overflow:auto; margin:0 -22px -20px; border-top:1px solid var(--border-soft);}
+.ecs-tbl{width:100%; border-collapse:collapse; font-size:13px;}
+.ecs-tbl th{position:sticky; top:0; z-index:1; background:var(--surface); text-align:left; font-size:11.5px; font-weight:600; color:var(--muted); padding:10px 12px; border-bottom:1px solid var(--border-soft); white-space:nowrap;}
+.ecs-tbl td{padding:11px 12px; border-bottom:1px solid var(--border-soft); color:var(--ink); vertical-align:middle;}
+.ecs-tbl th:first-child, .ecs-tbl td:first-child{padding-left:22px;} .ecs-tbl th:last-child, .ecs-tbl td:last-child{padding-right:22px;}
+.ecs-tbl tr[data-id]{cursor:pointer;} .ecs-tbl tr[data-id]:hover td{background:color-mix(in srgb, var(--ink) 4%, transparent);}
+.ecs-tbl .mono{font-family:"SFMono-Regular",Consolas,monospace; font-size:12px; white-space:nowrap; color:var(--muted);}
+.ecs-tbl .num{text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums;}
+.ecs-tbl .ttl{max-width:300px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.ecs-pill{display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; background:color-mix(in srgb, var(--ink) 6%, transparent); color:var(--ink); white-space:nowrap;}
+.ecs-pill i{width:7px; height:7px; border-radius:50%;}
+.ecs-empty{font-size:13px; color:var(--muted); padding:18px 0;}
+details.ecs-card > summary{list-style:none; cursor:pointer;} details.ecs-card > summary::-webkit-details-marker{display:none;}
+details.ecs-card > summary .ecs-hd{margin-bottom:0;} details.ecs-card[open] > summary .ecs-hd{margin-bottom:14px;}
+details.ecs-card > summary .chev{margin-left:auto; color:var(--muted); transition:transform .2s;} details.ecs-card[open] > summary .chev{transform:rotate(180deg);}
+@media(max-width:1180px){ .c3,.c4,.c5,.c6,.c7,.c8{grid-column:span 12;} }
 @media print{
-  body.ecs-print .sidebar, body.ecs-print .topbar .menubtn, body.ecs-print .save-status, body.ecs-print .page-glow, body.ecs-print .overlay, body.ecs-print .ecs-ctrl .ecs-files, body.ecs-print .ecs-quick{display:none !important;}
+  body.ecs-print .sidebar, body.ecs-print .topbar .menubtn, body.ecs-print .save-status, body.ecs-print .page-glow, body.ecs-print .overlay, body.ecs-print .ecs-out, body.ecs-print .ecs-chips{display:none !important;}
   body.ecs-print .main > section:not(#view-ecostats){display:none !important;}
   body.ecs-print .app{display:block;} body.ecs-print .main{padding:0;}
-  body.ecs-print .dash-panel, body.ecs-print .dq-tile, body.ecs-print .ecs-ringcard{box-shadow:none; border:1px solid #ccc; break-inside:avoid;}
-  body.ecs-print .ecs-scroll{max-height:none; overflow:visible;}
+  body.ecs-print .ecs-card, body.ecs-print .ecs-kpi{box-shadow:none; break-inside:avoid;}
+  body.ecs-print .ecs-tbl-wrap{max-height:none; overflow:visible;}
   body.ecs-print{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
   @page{size:A4 landscape; margin:10mm;}
 }
@@ -4883,125 +4937,195 @@ function renderCurrent(){
 /* ================= 설계변경 현황 ================= */
 // 보드 업무 중 유형 ECO(=ECN, E00…)·MDM(=신규코드등록, NPO…)을 탭으로 나눠, 수신일(=도달일)→완료일 달력 일수를 본다(사용자 확인 2026-10-19).
 // 기준 "도달일": 기간 안에 도달한 건 → 그중 완료·남은 건·소요일. 기준 "완료일": 기간 안에 완료한 건의 소요일 + 기간 끝 시점까지 도달했는데 아직 안 끝난 건.
-var ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null;
+// 차트는 카드의 실제 픽셀 크기로 그린다(viewBox로 늘리면 글씨·막대가 같이 커짐). 창 크기가 바뀌면 애니메이션 없이 다시 그림.
+var ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
 const ECS_TABS_ = {ECO:'ECN', MDM:'신규코드등록'};
-function ecsYmd_(d){ return d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : ''; }
-function ecsDefaultRange_(){ const t = new Date(); if(!ecsFrom_) ecsFrom_ = t.getFullYear() + '-01-01'; if(!ecsTo_) ecsTo_ = ecsYmd_(t); }
+const ECS_HIST_ = [['0~7일',0,7],['8~14일',8,14],['15~30일',15,30],['31~60일',31,60],['61~90일',61,90],['91일+',91,1e9]];
+const ECS_AGE_ = [['30일 이내',0,30],['31~60일',31,60],['61~90일',61,90],['91~180일',91,180],['180일 넘음',181,1e9]];
+function ecsYmd_(d){ return d ? d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') : ''; }
 function ecsData_(){
-  ecsDefaultRange_();
+  const t0 = new Date(); if(!ecsFrom_) ecsFrom_ = t0.getFullYear() + '-01-01'; if(!ecsTo_) ecsTo_ = ecsYmd_(t0);
   const from = parseDueDate(ecsFrom_), to = parseDueDate(ecsTo_), today = new Date(); today.setHours(0,0,0,0);
   const all = TASKS.filter(t=> t.type === ecsTab_).map(t=>{
     const recv = parseDueDate(t.receivedDate), end = parseDueDate(t.endDate), done = t.status === '완료';
-    const days = (done && recv && end && end >= recv) ? Math.round((end - recv) / 864e5) : null;
-    const age = (!done && recv) ? Math.round((today - recv) / 864e5) : null;
-    return {t, recv, end, done, days, age};
+    return {t, recv, end, done, days: (done && recv && end && end >= recv) ? Math.round((end - recv) / 864e5) : null, age: (!done && recv) ? Math.round((today - recv) / 864e5) : null};
   });
   const inR = d=> !!d && (!from || d >= from) && (!to || d <= to);
   let doneList, openList;
   if(ecsBasis_ === 'recv'){ const sc = all.filter(x=> inR(x.recv)); doneList = sc.filter(x=> x.done); openList = sc.filter(x=> !x.done); }
   else { doneList = all.filter(x=> x.done && inR(x.end)); openList = all.filter(x=> !x.done && x.recv && (!to || x.recv <= to)); }
   const ds = doneList.map(x=> x.days).filter(v=> v != null).sort((a,b)=> a-b);
-  const st = {n:ds.length, avg: ds.length ? ds.reduce((a,b)=>a+b,0) / ds.length : 0, med: ds.length ? (ds.length % 2 ? ds[(ds.length-1)/2] : (ds[ds.length/2-1] + ds[ds.length/2]) / 2) : 0,
+  const st = {n:ds.length, avg: ds.length ? ds.reduce((a,b)=> a+b, 0) / ds.length : 0, med: ds.length ? (ds.length % 2 ? ds[(ds.length-1)/2] : (ds[ds.length/2-1] + ds[ds.length/2]) / 2) : 0,
     max: ds.length ? ds[ds.length-1] : 0, in30: ds.filter(v=> v <= 30).length};
-  // 월별: 기간 안의 달마다 도달·완료 건수, 그 달 완료 건의 평균 소요일 (최대 36개월)
   const mStart = from || all.map(x=> x.recv).filter(Boolean).sort((a,b)=> a-b)[0] || today, mEnd = to || today, months = [];
   for(let d = new Date(mStart.getFullYear(), mStart.getMonth(), 1); d <= mEnd && months.length < 36; d = new Date(d.getFullYear(), d.getMonth()+1, 1)){
-    const key = d.getFullYear() * 12 + d.getMonth(), m = x=> x && (x.getFullYear() * 12 + x.getMonth()) === key;
-    const dn = all.filter(x=> x.done && m(x.end) && inR(x.end)), dd = dn.map(x=> x.days).filter(v=> v != null);
-    months.push({label: `${String(d.getFullYear()).slice(2)}.${d.getMonth()+1}`, ym: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`,
-      recv: all.filter(x=> m(x.recv) && inR(x.recv)).length, done: dn.length, avg: dd.length ? dd.reduce((a,b)=>a+b,0) / dd.length : null,
-      backlog: (()=>{ const me = new Date(d.getFullYear(), d.getMonth()+1, 0) > today ? today : new Date(d.getFullYear(), d.getMonth()+1, 0); return all.filter(x=> x.recv && x.recv <= me && !(x.done && x.end && x.end <= me)).length; })()});
+    const key = d.getFullYear() * 12 + d.getMonth(), inM = x=> x && (x.getFullYear() * 12 + x.getMonth()) === key;
+    const dn = all.filter(x=> x.done && inM(x.end) && inR(x.end)), dd = dn.map(x=> x.days).filter(v=> v != null);
+    const last = new Date(d.getFullYear(), d.getMonth()+1, 0), me = last > today ? today : last;
+    months.push({lb: (d.getMonth()+1) + '월', ym: d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'),
+      recv: all.filter(x=> inM(x.recv) && inR(x.recv)).length, done: dn.length, avg: dd.length ? dd.reduce((a,b)=> a+b, 0) / dd.length : null,
+      backlog: all.filter(x=> x.recv && x.recv <= me && !(x.done && x.end && x.end <= me)).length});
   }
   const bucket = (vals, defs)=> defs.map(([label, lo, hi])=> ({label, n: vals.filter(v=> v >= lo && v <= hi).length}));
-  const hist = bucket(ds, [['0~7일',0,7],['8~14일',8,14],['15~30일',15,30],['31~60일',31,60],['61~90일',61,90],['91일 이상',91,1e9]]);
-  const aging = bucket(openList.map(x=> x.age).filter(v=> v != null), [['30일 이내',0,30],['31~60일',31,60],['61~90일',61,90],['91~180일',91,180],['180일 넘음',181,1e9]]);
-  const top = doneList.filter(x=> x.days != null).sort((a,b)=> b.days - a.days).slice(0, 10);
-  const noRecv = all.filter(x=> !x.recv).length, noEnd = doneList.filter(x=> x.days == null).length;
-  return {all, doneList, openList, st, months, hist, aging, top, noRecv, noEnd, from, to};
+  return {all, doneList, openList, st, months,
+    hist: bucket(ds, ECS_HIST_), aging: bucket(openList.map(x=> x.age).filter(v=> v != null), ECS_AGE_),
+    top: doneList.filter(x=> x.days != null).sort((a,b)=> b.days - a.days).slice(0, 10),
+    noRecv: all.filter(x=> !x.recv).length, noEnd: doneList.filter(x=> x.days == null).length};
 }
-function ecsBarsSvg_(months){
-  const W = 640, H = 220, L = 30, B = 26, T = 14, n = Math.max(1, months.length), gw = (W - L) / n, bw = Math.min(18, gw * .32);
-  const max = Math.max(1, ...months.flatMap(m=> [m.recv, m.done])), y = v=> H - B - v / max * (H - B - T), step = Math.max(1, Math.ceil(max / 4));
-  const ticks = []; for(let v = 0; v <= max; v += step) ticks.push(v);
-  return `<svg class="ecs-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="월별 도달·완료 건수">
-    ${ticks.map(v=> `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" style="stroke:var(--border-soft)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`).join('')}
-    ${months.map((m,i)=>{ const cx = L + gw * i + gw / 2;
-      return `<g><title>${m.ym} · 도달 ${m.recv}건 · 완료 ${m.done}건</title>
-        <rect class="ecs-bar" x="${cx - bw - 1}" y="${y(m.recv)}" width="${bw}" height="${H - B - y(m.recv)}" rx="3" style="fill:var(--t-mdm)"/>
-        <rect class="ecs-bar" x="${cx + 1}" y="${y(m.done)}" width="${bw}" height="${H - B - y(m.done)}" rx="3" style="fill:var(--s-done)"/>
-        ${m.recv ? `<text class="v" x="${cx - bw/2 - 1}" y="${y(m.recv) - 4}" text-anchor="middle">${m.recv}</text>` : ''}
-        ${m.done ? `<text class="v" x="${cx + bw/2 + 1}" y="${y(m.done) - 4}" text-anchor="middle">${m.done}</text>` : ''}
-        <text x="${cx}" y="${H - 8}" text-anchor="middle">${m.label}</text></g>`; }).join('')}
-  </svg>`;
+// ---- 차트 그리기 도구 ----
+function ecsNice_(max){ if(max <= 4) return {max:4, step:1}; const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p, step = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * p; return {max: Math.ceil(max / step) * step, step}; }
+function ecsColPath_(x, y, w, h){ if(h <= 0.5) return ''; const r = Math.min(4, h, w / 2); return 'M' + x + ',' + (y + h) + 'V' + (y + r) + 'Q' + x + ',' + y + ' ' + (x + r) + ',' + y + 'H' + (x + w - r) + 'Q' + (x + w) + ',' + y + ' ' + (x + w) + ',' + (y + r) + 'V' + (y + h) + 'Z'; }
+function ecsSmooth_(p){ // 단조 곡선(값을 넘어서 튀지 않음)
+  const n = p.length; if(!n) return ''; if(n === 1) return 'M' + p[0][0] + ',' + p[0][1];
+  const m = [], t = [];
+  for(let i = 0; i < n-1; i++) m.push((p[i+1][1] - p[i][1]) / ((p[i+1][0] - p[i][0]) || 1));
+  t[0] = m[0]; t[n-1] = m[n-2];
+  for(let i = 1; i < n-1; i++) t[i] = (m[i-1] * m[i] <= 0) ? 0 : 2 / (1 / m[i-1] + 1 / m[i]);
+  let d = 'M' + p[0][0].toFixed(1) + ',' + p[0][1].toFixed(1);
+  for(let i = 0; i < n-1; i++){ const dx = (p[i+1][0] - p[i][0]) / 3;
+    d += 'C' + (p[i][0] + dx).toFixed(1) + ',' + (p[i][1] + t[i] * dx).toFixed(1) + ' ' + (p[i+1][0] - dx).toFixed(1) + ',' + (p[i+1][1] - t[i+1] * dx).toFixed(1) + ' ' + p[i+1][0].toFixed(1) + ',' + p[i+1][1].toFixed(1); }
+  return d;
 }
-function ecsLineSvg_(months, key, color, unit, aria){
-  const W = 640, H = 200, L = 30, B = 26, T = 18, n = months.length, gw = (W - L) / Math.max(1, n);
-  const vals = months.map(m=> m[key]), max = Math.max(unit === '일' ? 10 : 4, ...vals.filter(v=> v != null)), y = v=> H - B - v / max * (H - B - T), x = i=> L + gw * i + gw / 2;
-  const pts = vals.map((v,i)=> v == null ? null : [x(i), y(v), v, i]).filter(Boolean);
-  const d = pts.map((p,i)=> (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
-  const step = unit === '일' ? (Math.ceil(max / 4 / 5) * 5 || 5) : Math.max(1, Math.ceil(max / 4)), ticks = []; for(let v = 0; v <= max; v += step) ticks.push(v);
-  return `<svg class="ecs-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${aria}">
-    ${ticks.map(v=> `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}" style="stroke:var(--border-soft)"/><text x="${L-6}" y="${y(v)+4}" text-anchor="end">${v}</text>`).join('')}
-    ${pts.length > 1 ? `<path class="ecs-area" d="${d} L ${pts[pts.length-1][0]} ${H-B} L ${pts[0][0]} ${H-B} Z" style="fill:${color};opacity:.1"/><path class="ecs-line" d="${d}" style="fill:none;stroke:${color};stroke-width:3;stroke-linecap:round;stroke-linejoin:round"/>` : ''}
-    ${pts.map(p=> `<g class="ecs-dot"><title>${months[p[3]].ym} · ${aria} ${unit === '일' ? p[2].toFixed(1) : p[2]}${unit}</title><circle cx="${p[0]}" cy="${p[1]}" r="4.5" style="fill:var(--surface);stroke:${color};stroke-width:2.5"/><text class="v" x="${p[0]}" y="${p[1] - 9}" text-anchor="middle">${Math.round(p[2])}</text></g>`).join('')}
-    ${months.map((m,i)=> `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${m.label}</text>`).join('')}
-  </svg>`;
+function ecsAxis_(W, P, ih, nice, y){ let g = ''; for(let v = 0; v <= nice.max + 1e-9; v += nice.step){ const yy = y(v).toFixed(1); g += '<line x1="' + P.l + '" x2="' + (W - P.r) + '" y1="' + yy + '" y2="' + yy + '" stroke="var(--ecs-grid)"/><text x="' + (P.l - 8) + '" y="' + (+yy + 4) + '" text-anchor="end">' + (+v.toFixed(1)) + '</text>'; } return g; }
+// 묶음 막대(도달·완료) 또는 단일 막대(분포)
+function ecsColumns_(box, cats, series){
+  const W = box.clientWidth, H = box.clientHeight, P = {l:36, r:6, t:20, b:28}, ih = H - P.t - P.b, n = cats.length, band = (W - P.l - P.r) / Math.max(1, n);
+  const k = series.length, bw = Math.max(4, Math.min(24, (band * .64 - 2 * (k - 1)) / k));
+  const nice = ecsNice_(Math.max(1, ...series.flatMap(s=> s.vals))), y = v=> P.t + ih - v / nice.max * ih;
+  let g = ecsAxis_(W, P, ih, nice, y);
+  const maxIdx = series.map(s=> s.vals.indexOf(Math.max(...s.vals)));
+  cats.forEach((c, i)=>{
+    const cx = P.l + band * i + band / 2, gw = k * bw + 2 * (k - 1);
+    series.forEach((s, j)=>{ const v = s.vals[i], x = cx - gw / 2 + j * (bw + 2), yy = y(v);
+      g += '<path class="ecs-col" data-i="' + i + '" d="' + ecsColPath_(x, yy, bw, P.t + ih - yy) + '" fill="' + s.color + '"/>';
+      if(v && (s.labelAll || i === maxIdx[j] || i === n - 1)) g += '<text class="lbl" x="' + (x + bw / 2) + '" y="' + (yy - 6) + '" text-anchor="middle">' + v + '</text>'; });
+    g += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle">' + escapeHtml(c) + '</text>';
+    g += '<rect class="ecs-hit" data-i="' + i + '" x="' + (P.l + band * i) + '" y="' + P.t + '" width="' + band + '" height="' + ih + '" fill="transparent"/>';
+  });
+  box.innerHTML = '<svg width="' + W + '" height="' + H + '">' + g + '</svg><div class="ecs-tip"></div>';
 }
-function ecsHBars_(rows, color, unit){
-  const max = Math.max(1, ...rows.map(r=> r.n));
-  return rows.map(r=> `<div class="ecs-hb${r.id ? ' link' : ''}" ${r.id ? `data-id="${escapeHtml(r.id)}"` : ''} title="${escapeHtml(r.tip || '')}"><span class="nm">${escapeHtml(r.label)}</span><span class="tr"><span class="fl" style="display:block;width:${(r.n / max * 100).toFixed(1)}%;background:${r.color || color}"></span></span><span class="ct">${r.n}${unit}</span></div>`).join('');
+// 한 줄 곡선 + 옅은 면 + 끝점 값, 마우스 위치의 달을 세로선으로 표시
+function ecsLine_(box, cats, vals, color, unit){
+  const W = box.clientWidth, H = box.clientHeight, P = {l:36, r:22, t:22, b:28}, ih = H - P.t - P.b, n = cats.length, step = (W - P.l - P.r) / Math.max(1, n - 1);
+  const nice = ecsNice_(Math.max(1, ...vals.filter(v=> v != null))), y = v=> P.t + ih - v / nice.max * ih, x = i=> P.l + (n === 1 ? (W - P.l - P.r) / 2 : step * i);
+  const pts = vals.map((v, i)=> v == null ? null : [x(i), y(v), v, i]).filter(Boolean), d = ecsSmooth_(pts);
+  const gid = 'ecsg' + Math.random().toString(36).slice(2, 7);
+  let g = '<defs><linearGradient id="' + gid + '" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".18"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>' + ecsAxis_(W, P, ih, nice, y);
+  if(pts.length > 1) g += '<path class="ecs-area" d="' + d + 'L' + pts[pts.length-1][0] + ',' + (P.t + ih) + 'L' + pts[0][0] + ',' + (P.t + ih) + 'Z" fill="url(#' + gid + ')"/><path class="ecs-line" d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+  const lastP = pts[pts.length - 1], peak = pts.reduce((a, p)=> (!a || p[2] > a[2]) ? p : a, null);
+  [peak, lastP].filter((p, i, arr)=> p && arr.indexOf(p) === i).forEach(p=>{ g += '<circle class="ecs-dot" cx="' + p[0] + '" cy="' + p[1] + '" r="4.5" fill="' + color + '" stroke="var(--surface)" stroke-width="2"/><text class="lbl" x="' + p[0] + '" y="' + (p[1] - 10) + '" text-anchor="middle">' + (unit === '일' ? Math.round(p[2]) : p[2]) + unit + '</text>'; });
+  const every = Math.max(1, Math.ceil(n / Math.max(1, Math.floor((W - P.l - P.r) / 44))));
+  cats.forEach((c, i)=>{ if(i % every === 0 || i === n - 1) g += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + escapeHtml(c) + '</text>'; });
+  g += '<line class="ecs-guide" x1="0" x2="0" y1="' + P.t + '" y2="' + (P.t + ih) + '" stroke="var(--muted-2)" stroke-width="1" opacity="0"/><circle class="ecs-gdot" r="4.5" fill="' + color + '" stroke="var(--surface)" stroke-width="2" opacity="0"/>';
+  cats.forEach((c, i)=>{ g += '<rect class="ecs-hit" data-i="' + i + '" data-x="' + x(i) + '" data-y="' + (vals[i] == null ? '' : y(vals[i])) + '" x="' + (x(i) - step / 2) + '" y="' + P.t + '" width="' + (n === 1 ? W : step) + '" height="' + ih + '" fill="transparent"/>'; });
+  box.innerHTML = '<svg width="' + W + '" height="' + H + '">' + g + '</svg><div class="ecs-tip"></div>';
+}
+function ecsSpark_(box, vals, color){
+  const W = box.clientWidth, H = box.clientHeight, pts = vals.map((v, i)=> v == null ? null : [i, v]).filter(Boolean);
+  if(pts.length < 2){ box.innerHTML = ''; return; }
+  const max = Math.max(...pts.map(p=> p[1])) || 1, n = vals.length - 1 || 1, P = pts.map(p=> [p[0] / n * (W - 8) + 4, H - 6 - p[1] / max * (H - 14)]);
+  const d = ecsSmooth_(P), gid = 'ecsp' + Math.random().toString(36).slice(2, 7), L = P[P.length - 1];
+  box.innerHTML = '<svg width="' + W + '" height="' + H + '"><defs><linearGradient id="' + gid + '" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".22"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs>'
+    + '<path class="ecs-area" d="' + d + 'L' + L[0] + ',' + H + 'L' + P[0][0] + ',' + H + 'Z" fill="url(#' + gid + ')"/><path class="ecs-line" d="' + d + '" fill="none" stroke="' + color + '" stroke-width="2" stroke-linecap="round"/><circle class="ecs-dot" cx="' + L[0] + '" cy="' + L[1] + '" r="4" fill="' + color + '" stroke="var(--surface)" stroke-width="2"/></svg>';
+}
+function ecsDonut_(done, open){
+  const R = 78, SW = 16, C = 2 * Math.PI * R, tot = done + open, gap = (tot && done && open) ? 4 : 0;
+  const a = tot ? done / tot * C : 0, b = tot ? open / tot * C : 0;
+  const arc = (len, off, color, cls)=> len > gap ? '<circle class="ecs-arc ' + cls + '" cx="90" cy="90" r="' + R + '" fill="none" stroke="' + color + '" stroke-width="' + SW + '" stroke-linecap="round" stroke-dasharray="' + Math.max(0, len - gap).toFixed(2) + ' ' + C.toFixed(2) + '" stroke-dashoffset="' + (-off).toFixed(2) + '" transform="rotate(-90 90 90)"/>' : '';
+  return '<svg width="180" height="180" viewBox="0 0 180 180"><circle cx="90" cy="90" r="' + R + '" fill="none" stroke="var(--ecs-grid)" stroke-width="' + SW + '"/>' + arc(a, gap / 2, 'var(--ecs-s2)', 'a1') + arc(b, a + gap / 2, 'var(--ecs-a3)', 'a2') + '</svg>';
+}
+// 툴팁: 한 차트에 하나, 값이 먼저·이름은 뒤(값은 textContent로 넣음)
+function ecsTipBind_(box, rowsAt, lineMode){
+  const tip = box.querySelector('.ecs-tip'), svg = box.querySelector('svg'); if(!tip || !svg) return;
+  const guide = svg.querySelector('.ecs-guide'), gdot = svg.querySelector('.ecs-gdot');
+  const hide = ()=>{ tip.classList.remove('on'); box.classList.remove('hovering'); svg.querySelectorAll('.hot').forEach(e=> e.classList.remove('hot')); if(guide){ guide.setAttribute('opacity', 0); gdot.setAttribute('opacity', 0); } };
+  svg.addEventListener('pointerleave', hide);
+  svg.addEventListener('pointermove', e=>{
+    const hit = e.target.closest('.ecs-hit'); if(!hit){ hide(); return; }
+    const i = +hit.dataset.i, data = rowsAt(i); if(!data){ hide(); return; }
+    tip.replaceChildren();
+    const t = document.createElement('div'); t.className = 't'; t.textContent = data.title; tip.appendChild(t);
+    data.rows.forEach(r=>{ const row = document.createElement('div'); row.className = 'r'; const k = document.createElement('i'); k.style.background = r.color; const nm = document.createElement('span'); nm.textContent = r.name; const v = document.createElement('b'); v.textContent = r.value; row.append(k, nm, v); tip.appendChild(row); });
+    if(lineMode){ const gx = hit.dataset.x, gy = hit.dataset.y; guide.setAttribute('x1', gx); guide.setAttribute('x2', gx); guide.setAttribute('opacity', 1); if(gy){ gdot.setAttribute('cx', gx); gdot.setAttribute('cy', gy); gdot.setAttribute('opacity', 1); } else gdot.setAttribute('opacity', 0); }
+    else { box.classList.add('hovering'); svg.querySelectorAll('.ecs-col').forEach(c=> c.classList.toggle('hot', c.dataset.i === String(i))); }
+    const br = box.getBoundingClientRect(), tw = tip.offsetWidth, th = tip.offsetHeight;
+    let lx = e.clientX - br.left + 14, ly = e.clientY - br.top - th - 10; if(lx + tw > br.width) lx = e.clientX - br.left - tw - 14; if(ly < -10) ly = e.clientY - br.top + 16;
+    tip.style.left = lx + 'px'; tip.style.top = ly + 'px'; tip.classList.add('on');
+  });
+}
+function ecsDrawCharts_(el){
+  const D = ecsD_; if(!D) return;
+  const q = s=> el.querySelector('[data-chart="' + s + '"]'), M = D.months, cats = M.map(m=> m.lb);
+  const rootEl = el.querySelector('.ecs-root') || el, css = v=> getComputedStyle(rootEl).getPropertyValue(v).trim(); // 색 변수는 .ecs-root에 있음
+  const c1 = css('--ecs-s1'), c2 = css('--ecs-s2'), c3 = css('--ecs-s3'), c4 = css('--ecs-s4');
+  let b;
+  if((b = q('flow'))){ ecsColumns_(b, cats, [{vals:M.map(m=> m.recv), color:'var(--ecs-s1)'}, {vals:M.map(m=> m.done), color:'var(--ecs-s2)'}]);
+    ecsTipBind_(b, i=> ({title:M[i].ym, rows:[{name:'도달', value:M[i].recv + '건', color:c1}, {name:'완료', value:M[i].done + '건', color:c2}]})); }
+  if((b = q('avg'))){ ecsLine_(b, cats, M.map(m=> m.avg), c3, '일');
+    ecsTipBind_(b, i=> ({title:M[i].ym, rows:[{name:'평균 소요일', value: M[i].avg == null ? '완료 없음' : M[i].avg.toFixed(1) + '일', color:c3}, {name:'완료', value:M[i].done + '건', color:'transparent'}]}), true); }
+  if((b = q('backlog'))){ ecsLine_(b, cats, M.map(m=> m.backlog), c4, '건');
+    ecsTipBind_(b, i=> ({title:M[i].ym + ' 말', rows:[{name:'남은 건', value:M[i].backlog + '건', color:c4}]}), true); }
+  if((b = q('hist'))){ ecsColumns_(b, D.hist.map(h=> h.label), [{vals:D.hist.map(h=> h.n), color:'var(--ecs-s1)', labelAll:true}]);
+    ecsTipBind_(b, i=> ({title:'소요 ' + D.hist[i].label, rows:[{name:'완료', value:D.hist[i].n + '건', color:c1}, {name:'비율', value: (D.st.n ? Math.round(D.hist[i].n / D.st.n * 100) : 0) + '%', color:'transparent'}]})); }
+  if((b = q('spark'))) ecsSpark_(b, M.map(m=> m.avg), c3);
 }
 function renderEcoStats(){
-  const el = document.getElementById('view-ecostats'), D = ecsData_(), st = D.st, label = ECS_TABS_[ecsTab_];
-  const total = D.doneList.length + D.openList.length, rate = total ? Math.round(D.doneList.length / total * 100) : 0;
-  const R = 58, C = 2 * Math.PI * R;
-  const f1 = v=> (Math.round(v * 10) / 10).toString();
-  const notes = [D.noRecv ? `수신일 없는 ${D.noRecv}건은 제외` : '', D.noEnd ? `완료인데 완료일이 없거나 수신일보다 빠른 ${D.noEnd}건은 소요일 계산에서 제외` : ''].filter(Boolean).join(' · ');
-  const basisTxt = ecsBasis_ === 'recv' ? '기간 안에 도달한 건 기준' : '기간 안에 완료한 건 기준 (남은 건 = 기간 끝까지 도달했는데 아직 안 끝난 건)';
-  const fmtD = d=> d ? dashKey(d) : '—';
-  const row = x=> `<tr data-id="${escapeHtml(x.t.id)}"><td class="mono">${escapeHtml(x.t.docNumber||'')}</td><td>${escapeHtml(x.t.title||'')}</td><td>${escapeHtml(x.t.model||'')}</td><td>${escapeHtml(x.t.assignee||'미배정')}</td><td class="mono">${fmtD(x.recv)}</td><td class="mono">${x.done ? fmtD(x.end) : '—'}</td><td class="num">${x.done ? (x.days != null ? x.days + '일' : '—') : (x.age != null ? x.age + '일째' : '—')}</td><td>${escapeHtml(x.t.status||'')}</td></tr>`;
-  const thead = `<thead><tr><th>번호</th><th>제목</th><th>MODEL</th><th>담당자</th><th>도달일</th><th>완료일</th><th class="num">소요/경과</th><th>상태</th></tr></thead>`;
-  const openSorted = D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1));
-  const allSorted = D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0));
-  el.innerHTML = `
-    <div class="ecs-ctrl">
-      <div class="ecs-seg" data-k="tab">${Object.entries(ECS_TABS_).map(([k,v])=> `<button type="button" data-v="${k}" class="${ecsTab_===k?'on':''}">${v}</button>`).join('')}</div>
-      <div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="${ecsBasis_==='recv'?'on':''}">도달일 기준</button><button type="button" data-v="end" class="${ecsBasis_==='end'?'on':''}">완료일 기준</button></div>
-      <span class="ecs-range"><input type="date" id="ecsFrom" value="${ecsFrom_}"> ~ <input type="date" id="ecsTo" value="${ecsTo_}"></span>
-      <span class="ecs-quick"><button type="button" data-q="year">올해</button><button type="button" data-q="q">이번 분기</button><button type="button" data-q="3m">최근 3개월</button><button type="button" data-q="m">이번 달</button></span>
-      <span class="ecs-files"><button class="btn btn-ghost" id="ecsXlsx">엑셀로 받기</button><button class="btn btn-ghost" id="ecsPdf">PDF·인쇄</button></span>
-    </div>
-    <div class="dash-note" style="margin-top:-6px">${escapeHtml(label)} · ${escapeHtml(ecsFrom_)} ~ ${escapeHtml(ecsTo_)} · ${basisTxt} · 소요일 = 도달일(수신일)→완료일 달력 일수${notes ? ' · ' + escapeHtml(notes) : ''}</div>
-    <div class="ecs-kpis">
-      <div class="ecs-ringcard"><div class="ecs-ringwrap"><svg viewBox="0 0 140 140"><circle cx="70" cy="70" r="${R}" style="fill:none;stroke:var(--border-soft);stroke-width:14"/><circle class="ecs-ring" cx="70" cy="70" r="${R}" style="fill:none;stroke:var(--s-done);stroke-width:14;stroke-linecap:round;stroke-dasharray:${C.toFixed(2)};stroke-dashoffset:${(C * (1 - rate/100)).toFixed(2)}"/></svg><div class="lbl"><strong class="ecs-num">${rate}%</strong><span>완료율</span></div></div><span style="font-size:12px;color:var(--muted)">${D.doneList.length} / ${total}건</span></div>
-      <div class="dq-tile"><span class="dq-tile-ico">📥</span><div><strong class="ecs-num">${total}</strong><span>${ecsBasis_==='recv' ? '기간 내 도달' : '완료 + 남은 건'}</span></div></div>
-      <div class="dq-tile"><span class="dq-tile-ico">✅</span><div><strong class="ecs-num">${D.doneList.length}</strong><span>완료</span></div></div>
-      <div class="dq-tile ${D.openList.length ? 'dq-tile-warn' : ''}"><span class="dq-tile-ico">⏳</span><div><strong class="ecs-num">${D.openList.length}</strong><span>남은 건</span><span class="ecs-tile-sub">${D.openList.filter(x=> (x.age||0) > 60).length}건은 60일 넘음</span></div></div>
-      <div class="ecs-kpi2">
-        <div class="dq-tile"><span class="dq-tile-ico">⏱️</span><div><strong class="ecs-num" data-dec="1">${f1(st.avg)}</strong><span>평균 소요일</span></div></div>
-        <div class="dq-tile"><span class="dq-tile-ico">📍</span><div><strong class="ecs-num" data-dec="1">${f1(st.med)}</strong><span>중간값 (일)</span><span class="ecs-tile-sub">가장 오래 ${st.max}일</span></div></div>
-        <div class="dq-tile"><span class="dq-tile-ico">🚀</span><div><strong class="ecs-num">${st.n ? Math.round(st.in30 / st.n * 100) : 0}%</strong><span>30일 안에 완료</span><span class="ecs-tile-sub">${st.in30} / ${st.n}건</span></div></div>
-      </div>
-    </div>
-    <div class="ecs-grid">
-      <div class="dash-panel wide"><h2>📊 월별 도달·완료</h2>${ecsBarsSvg_(D.months)}<div class="ecs-legend"><span><i style="background:var(--t-mdm)"></i>도달(수신)</span><span><i style="background:var(--s-done)"></i>완료</span></div></div>
-      <div class="dash-panel wide"><h2>⏱️ 월별 평균 소요일 <span class="muted-cell" style="font-weight:400;font-size:11.5px">그 달에 완료한 건 기준</span></h2>${ecsLineSvg_(D.months, 'avg', 'var(--accent)', '일', '평균 소요일')}</div>
-      <div class="dash-panel"><h2>📦 소요일 분포 <span class="muted-cell" style="font-weight:400;font-size:11.5px">완료 ${st.n}건</span></h2>${ecsHBars_(D.hist.map((h,i)=> ({...h, color:['var(--s-done)','var(--s-done)','var(--s-progress)','var(--accent)','var(--s-waiting)','var(--s-delay)'][i]})), '', '건')}</div>
-      <div class="dash-panel"><h2>⏳ 남은 건 경과일 <span class="muted-cell" style="font-weight:400;font-size:11.5px">도달 후 지금까지</span></h2>${D.openList.length ? ecsHBars_(D.aging.map((h,i)=> ({...h, color:['var(--s-progress)','var(--accent)','var(--s-waiting)','var(--s-delay)','var(--s-delay)'][i]})), '', '건') : '<div class="ecs-empty">남은 건이 없습니다.</div>'}</div>
-      <div class="dash-panel"><h2>📉 월말 남은 건 추이 <span class="muted-cell" style="font-weight:400;font-size:11.5px">그 달 말까지 도달했는데 안 끝난 건</span></h2>${ecsLineSvg_(D.months, 'backlog', 'var(--s-delay)', '건', '월말 남은 건')}</div>
-      <div class="dash-panel"><h2>🐢 오래 걸린 TOP 10</h2>${D.top.length ? ecsHBars_(D.top.map(x=> ({label:(x.t.docNumber||'') + ' ' + (x.t.title||''), n:x.days, id:x.t.id, tip:`${x.t.docNumber} · ${fmtD(x.recv)} → ${fmtD(x.end)}`})), 'var(--s-delay)', '일') : '<div class="ecs-empty">완료한 건이 없습니다.</div>'}</div>
-      <div class="dash-panel wide"><h2>⏳ 남은 건 ${D.openList.length}건 <span class="muted-cell" style="font-weight:400;font-size:11.5px">오래된 순 · 누르면 상세</span></h2>${D.openList.length ? `<div class="ecs-scroll"><table class="ecs-table">${thead}<tbody>${openSorted.map(row).join('')}</tbody></table></div>` : '<div class="ecs-empty">남은 건이 없습니다.</div>'}</div>
-      <div class="dash-panel wide"><h2>📋 전체 목록 ${allSorted.length}건 <span class="muted-cell" style="font-weight:400;font-size:11.5px">도달일 최근 순</span></h2>${allSorted.length ? `<div class="ecs-scroll"><table class="ecs-table">${thead}<tbody>${allSorted.map(row).join('')}</tbody></table></div>` : '<div class="ecs-empty">해당 기간에 건이 없습니다.</div>'}</div>
-    </div>`;
+  const el = document.getElementById('view-ecostats'), D = ecsD_ = ecsData_(), st = D.st;
+  const total = D.doneList.length + D.openList.length, rate = total ? Math.round(D.doneList.length / total * 100) : 0, in30 = st.n ? Math.round(st.in30 / st.n * 100) : 0;
+  const over60 = D.openList.filter(x=> (x.age || 0) > 60).length, f1 = v=> String(Math.round(v * 10) / 10);
+  const fmtD = d=> d ? dashKey(d) : '—', esc = escapeHtml;
+  const notes = [D.noRecv ? '수신일 없는 ' + D.noRecv + '건 제외' : '', D.noEnd ? '완료일 이상 ' + D.noEnd + '건은 소요일 계산 제외' : ''].filter(Boolean).join(' · ');
+  const ageIdx = a=> ECS_AGE_.findIndex(([, lo, hi])=> a >= lo && a <= hi);
+  const agePill = x=> x.age == null ? '—' : '<span class="ecs-pill"><i style="background:var(--ecs-a' + (ageIdx(x.age) + 1) + ')"></i>' + x.age + '일째</span>';
+  const row = x=> '<tr data-id="' + esc(x.t.id) + '"><td class="mono">' + esc(x.t.docNumber || '') + '</td><td class="ttl" title="' + esc(x.t.title || '') + '">' + esc(x.t.title || '') + '</td><td>' + esc(x.t.assignee || '미배정') + '</td><td class="mono">' + fmtD(x.recv) + '</td><td class="mono">' + (x.done ? fmtD(x.end) : '—') + '</td><td class="num">' + (x.done ? (x.days != null ? '<b>' + x.days + '</b>일' : '—') : agePill(x)) + '</td><td><span class="ecs-pill">' + esc(x.t.status || '') + '</span></td></tr>';
+  const thead = '<thead><tr><th>번호</th><th>제목</th><th>담당자</th><th>도달일</th><th>완료일</th><th class="num">소요 / 경과</th><th>상태</th></tr></thead>';
+  const theadOpen = '<thead><tr><th>번호</th><th>제목</th><th>도달일</th><th class="num">경과</th><th>상태</th></tr></thead>';
+  const rowOpen = x=> '<tr data-id="' + esc(x.t.id) + '"><td class="mono">' + esc(x.t.docNumber || '') + '</td><td class="ttl" title="' + esc(x.t.title || '') + '">' + esc(x.t.title || '') + '</td><td class="mono">' + fmtD(x.recv) + '</td><td class="num">' + agePill(x) + '</td><td><span class="ecs-pill">' + esc(x.t.status || '') + '</span></td></tr>';
+  const openSorted = D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1)), allSorted = D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0));
+  const agTot = D.aging.reduce((a, h)=> a + h.n, 0), topMax = D.top.length ? D.top[0].days : 1;
+  const ico = {x:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8m0 0l-3-3m3 3l3-3M3 13h10"/></svg>', p:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6V2h8v4M4 12H2.5V7.5a1.5 1.5 0 0 1 1.5-1.5h8a1.5 1.5 0 0 1 1.5 1.5V12H12M4 10h8v4H4z"/></svg>'};
+  el.innerHTML = '<div class="ecs-root">'
+  + '<div class="ecs-bar">'
+    + '<div class="ecs-seg" data-k="tab">' + Object.entries(ECS_TABS_).map(([k, v])=> '<button type="button" data-v="' + k + '" class="' + (ecsTab_ === k ? 'on' : '') + '">' + v + '</button>').join('') + '</div>'
+    + '<div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="' + (ecsBasis_ === 'recv' ? 'on' : '') + '">도달일 기준</button><button type="button" data-v="end" class="' + (ecsBasis_ === 'end' ? 'on' : '') + '">완료일 기준</button></div>'
+    + '<span class="ecs-date"><input type="date" id="ecsFrom" value="' + ecsFrom_ + '" aria-label="시작일"> – <input type="date" id="ecsTo" value="' + ecsTo_ + '" aria-label="종료일"></span>'
+    + '<span class="ecs-chips"><button type="button" data-q="year">올해</button><button type="button" data-q="q">이번 분기</button><button type="button" data-q="3m">최근 3개월</button><button type="button" data-q="m">이번 달</button></span>'
+    + '<span class="ecs-out"><button type="button" id="ecsXlsx">' + ico.x + '엑셀</button><button type="button" id="ecsPdf">' + ico.p + 'PDF</button></span>'
+  + '</div>'
+  + '<div class="ecs-scope">' + esc(ECS_TABS_[ecsTab_]) + ' · ' + esc(ecsFrom_) + ' ~ ' + esc(ecsTo_) + ' · ' + (ecsBasis_ === 'recv' ? '기간 안에 도달한 건' : '기간 안에 완료한 건 (남은 건 = 기간 끝까지 도달했는데 안 끝난 건)') + ' · 소요일 = 도달일→완료일 달력 일수' + (notes ? ' · ' + esc(notes) : '') + '</div>'
+  + '<div class="ecs-bento">'
+    + '<div class="ecs-card c5 ecs-hero"><div><div class="ecs-eyebrow">도달 → 생산기술 완료까지 평균</div><div class="ecs-hero-num"><strong class="ecs-num" data-dec="1">' + f1(st.avg) + '</strong><span>일</span></div>'
+      + '<div class="ecs-hero-sub">중간값 <b>' + f1(st.med) + '일</b> · 가장 오래 <b>' + st.max + '일</b> · 완료 <b>' + st.n + '건</b> 기준</div></div><div class="ecs-spark" data-chart="spark"></div></div>'
+    + '<div class="c7 ecs-kpis">'
+      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s1)"></span>' + (ecsBasis_ === 'recv' ? '도달' : '대상 (완료 + 남은 건)') + '</div><div class="vl"><strong class="ecs-num">' + total + '</strong><span>건</span></div><div class="ft">' + esc(ecsFrom_.slice(5).replace('-', '/')) + ' ~ ' + esc(ecsTo_.slice(5).replace('-', '/')) + '</div></div>'
+      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s2)"></span>완료</div><div class="vl"><strong class="ecs-num">' + D.doneList.length + '</strong><span>건</span></div><div class="ecs-meter"><i class="ecs-mt" style="width:' + rate + '%;background:var(--ecs-s2)"></i></div><div class="ft">완료율 <b>' + rate + '%</b></div></div>'
+      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-a3)"></span>남은 건</div><div class="vl"><strong class="ecs-num">' + D.openList.length + '</strong><span>건</span></div><div class="ft">' + (over60 ? '<span class="crit">⚠ ' + over60 + '건</span>은 도달 후 60일 넘음' : '60일 넘은 건 없음') + '</div></div>'
+      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s3)"></span>30일 안에 완료</div><div class="vl"><strong class="ecs-num">' + in30 + '</strong><span>%</span></div><div class="ecs-meter"><i class="ecs-mt" style="width:' + in30 + '%;background:var(--ecs-s3)"></i></div><div class="ft"><b>' + st.in30 + '</b> / ' + st.n + '건</div></div>'
+    + '</div>'
+    + '<div class="ecs-card c8"><div class="ecs-hd"><div><h3>월별 도달 · 완료</h3><p>막대에 마우스를 올리면 그 달 건수</p></div><div class="ecs-lg"><span><i style="background:var(--ecs-s1)"></i>도달</span><span><i style="background:var(--ecs-s2)"></i>완료</span></div></div><div class="ecs-chart" data-chart="flow" style="height:280px"></div></div>'
+    + '<div class="ecs-card c4"><div class="ecs-hd"><div><h3>완료 현황</h3><p>' + total + '건 중</p></div></div><div class="ecs-donut"><div class="ecs-donut-wrap">' + ecsDonut_(D.doneList.length, D.openList.length) + '<div class="ctr"><strong class="ecs-num">' + rate + '</strong><span>% 완료</span></div></div>'
+      + '<div class="ecs-rows"><div class="ecs-row"><i style="background:var(--ecs-s2)"></i>완료<b>' + D.doneList.length + '건</b></div><div class="ecs-row"><i style="background:var(--ecs-a3)"></i>남은 건<b>' + D.openList.length + '건</b></div></div></div></div>'
+    + '<div class="ecs-card c6"><div class="ecs-hd"><div><h3>월별 평균 소요일</h3><p>그 달에 완료한 건 기준</p></div></div><div class="ecs-chart" data-chart="avg" style="height:220px"></div></div>'
+    + '<div class="ecs-card c6"><div class="ecs-hd"><div><h3>월말 남은 건</h3><p>그 달 말까지 도달했는데 아직 안 끝난 건</p></div></div><div class="ecs-chart" data-chart="backlog" style="height:220px"></div></div>'
+    + '<div class="ecs-card c6"><div class="ecs-hd"><div><h3>소요일 분포</h3><p>완료 ' + st.n + '건이 며칠 만에 끝났나</p></div></div><div class="ecs-chart" data-chart="hist" style="height:220px"></div></div>'
+    + '<div class="ecs-card c6"><div class="ecs-hd"><div><h3>남은 건 경과일</h3><p>도달 후 오늘까지 · ' + agTot + '건</p></div></div>'
+      + (agTot ? '<div class="ecs-stack">' + D.aging.map((h, i)=> h.n ? '<i class="ecs-sg" style="flex:' + h.n + ';background:var(--ecs-a' + (i + 1) + ')" title="' + h.label + ' ' + h.n + '건"></i>' : '').join('') + '</div>'
+        + '<div class="ecs-rows">' + D.aging.map((h, i)=> '<div class="ecs-row"><i style="background:var(--ecs-a' + (i + 1) + ')"></i>' + h.label + '<b>' + h.n + '건 <span style="color:var(--muted);font-weight:500">· ' + Math.round(h.n / agTot * 100) + '%</span></b></div>').join('') + '</div>' : '<div class="ecs-empty">남은 건이 없습니다.</div>')
+    + '</div>'
+    + '<div class="ecs-card c5"><div class="ecs-hd"><div><h3>오래 걸린 TOP 10</h3><p>누르면 상세</p></div></div>'
+      + (D.top.length ? '<div class="ecs-rank">' + D.top.map((x, i)=> '<div class="ecs-rk" data-id="' + esc(x.t.id) + '" title="' + esc(fmtD(x.recv) + ' → ' + fmtD(x.end)) + '"><span class="no">' + (i + 1) + '</span><div class="nm"><div>' + esc(x.t.title || '') + '</div><small>' + esc(x.t.docNumber || '') + '</small><div class="tr"><i class="ecs-rb" style="width:' + (x.days / topMax * 100).toFixed(1) + '%"></i></div></div><span class="dv">' + x.days + '일</span></div>').join('') + '</div>' : '<div class="ecs-empty">완료한 건이 없습니다.</div>')
+    + '</div>'
+    + '<div class="ecs-card c7"><div class="ecs-hd"><div><h3>남은 건 ' + D.openList.length + '건</h3><p>오래된 순 · 누르면 상세</p></div></div>' + (D.openList.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl">' + theadOpen + '<tbody>' + openSorted.map(rowOpen).join('') + '</tbody></table></div>' : '<div class="ecs-empty">남은 건이 없습니다.</div>') + '</div>'
+    + '<details class="ecs-card"><summary><div class="ecs-hd"><div><h3>전체 목록 ' + allSorted.length + '건</h3><p>도달일 최근 순 · 눌러서 펼치기</p></div><span class="chev">▾</span></div></summary>' + (allSorted.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl">' + thead + '<tbody>' + allSorted.map(row).join('') + '</tbody></table></div>' : '<div class="ecs-empty">해당 기간에 건이 없습니다.</div>') + '</details>'
+  + '</div></div>';
+  ecsDrawCharts_(el);
+  if(!ecsRO_ && typeof ResizeObserver !== 'undefined'){ let w = 0, tm = 0; ecsRO_ = new ResizeObserver(()=>{ const nw = el.clientWidth; if(!nw || nw === w) return; w = nw; clearTimeout(tm); tm = setTimeout(()=>{ if(currentView === 'ecostats') ecsDrawCharts_(el); }, 120); }); ecsRO_.observe(el); }
   const rerender = ()=>{ ecsAnimate_ = true; renderEcoStats(); };
   el.querySelectorAll('.ecs-seg').forEach(g=> g.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; if(g.dataset.k === 'tab') ecsTab_ = b.dataset.v; else ecsBasis_ = b.dataset.v; rerender(); }));
   el.querySelector('#ecsFrom').addEventListener('change', e=>{ ecsFrom_ = e.target.value; rerender(); });
   el.querySelector('#ecsTo').addEventListener('change', e=>{ ecsTo_ = e.target.value; rerender(); });
-  el.querySelector('.ecs-quick').addEventListener('click', e=>{
-    const b = e.target.closest('button'); if(!b) return; const t = new Date(), y = t.getFullYear(), m = t.getMonth();
-    const f = {year:new Date(y,0,1), q:new Date(y, m - m % 3, 1), '3m':new Date(y, m - 2, 1), m:new Date(y, m, 1)}[b.dataset.q];
-    ecsFrom_ = ecsYmd_(f); ecsTo_ = ecsYmd_(t); rerender();
-  });
+  el.querySelector('.ecs-chips').addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; const t = new Date(), y = t.getFullYear(), m = t.getMonth();
+    ecsFrom_ = ecsYmd_({year:new Date(y, 0, 1), q:new Date(y, m - m % 3, 1), '3m':new Date(y, m - 2, 1), m:new Date(y, m, 1)}[b.dataset.q]); ecsTo_ = ecsYmd_(t); rerender(); });
   el.querySelectorAll('[data-id]').forEach(r=> r.addEventListener('click', ()=> openDetail(r.dataset.id)));
   el.querySelector('#ecsXlsx').addEventListener('click', ()=> ecsExportXlsx_(D));
   el.querySelector('#ecsPdf').addEventListener('click', ecsPrint_);
@@ -5011,46 +5135,44 @@ function ecsPlayMotion_(el){
   if(ecsMotion_){ ecsMotion_.progress(1).kill(); ecsMotion_ = null; }
   if(!ecsAnimate_ || typeof gsap === 'undefined' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   ecsAnimate_ = false;
-  const q = s=> el.querySelectorAll(s), tl = gsap.timeline({defaults:{ease:'power3.out'}});
-  ecsMotion_ = tl;
-  tl.from(q('.ecs-ringcard, .ecs-kpis .dq-tile'), {y:30, opacity:0, scale:.92, duration:.6, stagger:.06, ease:'back.out(1.6)'})
-    .from(q('.ecs-grid > .dash-panel'), {y:40, opacity:0, duration:.6, stagger:.08}, .2);
-  q('.ecs-num').forEach(n=>{
-    const m = /^([\d.]+)(%?)$/.exec(n.textContent.trim()); if(!m) return;
-    const o = {v:0}, target = +m[1], dec = n.dataset.dec ? 1 : 0;
-    tl.to(o, {v:target, duration:1.2, ease:'power2.out', onUpdate:()=>{ n.textContent = (dec ? (Math.round(o.v*10)/10).toString() : Math.round(o.v)) + m[2]; }, onComplete:()=>{ n.textContent = m[0]; }}, .2);
-  });
-  q('.ecs-ring').forEach(c=>{ const full = parseFloat(c.style.strokeDasharray); tl.from(c, {strokeDashoffset:full, duration:1.3, ease:'power2.inOut'}, .25); });
-  tl.from(q('.ecs-bar'), {scaleY:0, duration:.7, stagger:.025, ease:'back.out(1.4)'}, .5);
+  const q = s=> el.querySelectorAll(s), tl = gsap.timeline({defaults:{ease:'power3.out'}}); ecsMotion_ = tl;
+  tl.from(q('.ecs-bar > *'), {y:-10, opacity:0, duration:.4, stagger:.04})
+    .from(q('.ecs-hero, .ecs-kpi'), {y:24, opacity:0, duration:.6, stagger:.07}, .1)
+    .from(q('.ecs-bento > .ecs-card:not(.ecs-hero)'), {y:32, opacity:0, duration:.6, stagger:.06}, .3);
+  q('.ecs-num').forEach(n=>{ const target = parseFloat(n.textContent); if(isNaN(target)) return; const o = {v:0}, dec = !!n.dataset.dec, fin = n.textContent;
+    tl.to(o, {v:target, duration:1.3, ease:'power2.out', onUpdate:()=>{ n.textContent = dec ? String(Math.round(o.v * 10) / 10) : String(Math.round(o.v)); }, onComplete:()=>{ n.textContent = fin; }}, .15); });
+  tl.from(q('.ecs-mt'), {scaleX:0, duration:1, ease:'expo.out'}, .5);
+  tl.from(q('.ecs-col'), {scaleY:0, duration:.75, stagger:.018, ease:'back.out(1.3)'}, .55);
   q('.ecs-line').forEach(p=>{ const L = p.getTotalLength(); gsap.set(p, {strokeDasharray:L, strokeDashoffset:L}); tl.to(p, {strokeDashoffset:0, duration:1.4, ease:'power2.inOut', onComplete:()=> gsap.set(p, {clearProps:'strokeDasharray,strokeDashoffset'})}, .6); });
-  tl.from(q('.ecs-area'), {opacity:0, duration:.8}, 1.3).from(q('.ecs-dot'), {opacity:0, scale:0, transformOrigin:'center', duration:.4, stagger:.05, ease:'back.out(3)'}, 1.1);
-  tl.from(q('.ecs-hb .fl'), {scaleX:0, duration:.8, stagger:.04, ease:'expo.out'}, .7);
+  tl.from(q('.ecs-area'), {opacity:0, duration:.9}, 1.2).from(q('.ecs-dot'), {scale:0, transformOrigin:'center', duration:.45, ease:'back.out(3)'}, 1.6);
+  q('.ecs-arc').forEach(c=>{ const dash = c.getAttribute('stroke-dasharray').split(' '); tl.fromTo(c, {attr:{'stroke-dasharray':'0 ' + dash[1]}}, {attr:{'stroke-dasharray':dash.join(' ')}, duration:1.2, ease:'power2.inOut'}, .5); });
+  tl.from(q('.ecs-sg'), {scaleX:0, duration:.8, stagger:.06, ease:'expo.out'}, .7).from(q('.ecs-rb'), {scaleX:0, duration:.8, stagger:.04, ease:'expo.out'}, .7);
 }
 function ecsExportXlsx_(D){
   if(typeof XLSX === 'undefined'){ alert('엑셀 라이브러리를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'); return; }
-  const label = ECS_TABS_[ecsTab_], st = D.st, total = D.doneList.length + D.openList.length, wb = XLSX.utils.book_new();
-  const fmtD = d=> d ? dashKey(d) : '';
+  const label = ECS_TABS_[ecsTab_], st = D.st, total = D.doneList.length + D.openList.length, wb = XLSX.utils.book_new(), fmtD = d=> d ? dashKey(d) : '';
   const sum = [['설계변경 현황', label], ['기간', ecsFrom_ + ' ~ ' + ecsTo_], ['기준', ecsBasis_ === 'recv' ? '도달일(수신일) 기준' : '완료일 기준'], ['소요일', '도달일→완료일 달력 일수'], [],
     ['대상(완료+남은 건)', total], ['완료', D.doneList.length], ['남은 건', D.openList.length], ['완료율(%)', total ? Math.round(D.doneList.length / total * 100) : 0],
     ['평균 소요일', +st.avg.toFixed(1)], ['중간값(일)', st.med], ['가장 오래(일)', st.max], ['30일 안에 완료', st.in30], ['30일 안에 완료(%)', st.n ? Math.round(st.in30 / st.n * 100) : 0],
     [], ['수신일 없어 제외', D.noRecv], ['소요일 계산 제외(완료일 없음 등)', D.noEnd], ['만든 날', dashKey(new Date())]];
-  const s1 = XLSX.utils.aoa_to_sheet(sum); s1['!cols'] = [{wch:28},{wch:30}]; XLSX.utils.book_append_sheet(wb, s1, '요약');
+  const s1 = XLSX.utils.aoa_to_sheet(sum); s1['!cols'] = [{wch:28}, {wch:30}]; XLSX.utils.book_append_sheet(wb, s1, '요약');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.months.map(m=> ({'월':m.ym, '도달':m.recv, '완료':m.done, '평균 소요일':m.avg == null ? '' : +m.avg.toFixed(1), '월말 남은 건':m.backlog}))), '월별');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.hist.map(h=> ({'소요일':h.label, '건수':h.n}))), '소요일분포');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.aging.map(h=> ({'경과일':h.label, '남은 건':h.n}))), '남은건경과');
-  const rowOf = x=> ({'번호':x.t.docNumber||'', '제목':x.t.title||'', 'MODEL':x.t.model||'', '담당자':x.t.assignee||'', '도달일':fmtD(x.recv), '완료일':x.done ? fmtD(x.end) : '', '소요일':x.days ?? '', '경과일(남은 건)':x.age ?? '', '상태':x.t.status||''});
+  const rowOf = x=> ({'번호':x.t.docNumber || '', '제목':x.t.title || '', 'MODEL':x.t.model || '', '담당자':x.t.assignee || '', '도달일':fmtD(x.recv), '완료일':x.done ? fmtD(x.end) : '', '소요일':x.days ?? '', '경과일(남은 건)':x.age ?? '', '상태':x.t.status || ''});
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1)).map(rowOf)), '남은건');
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.doneList.concat(D.openList).sort((a,b)=> (b.recv||0) - (a.recv||0)).map(rowOf)), '전체목록');
-  XLSX.writeFile(wb, `설계변경현황_${label}_${ecsFrom_}_${ecsTo_}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0)).map(rowOf)), '전체목록');
+  XLSX.writeFile(wb, '설계변경현황_' + label + '_' + ecsFrom_ + '_' + ecsTo_ + '.xlsx');
 }
-// PDF: 브라우저 인쇄(대상 "PDF로 저장")로 이 화면만, 밝은 색으로, 애니메이션은 끝난 상태로 찍는다
+// PDF: 브라우저 인쇄("PDF로 저장")로 이 화면만, 밝은 색으로, 애니메이션은 끝난 상태·차트는 인쇄 폭으로 다시 그려서 찍는다
 function ecsPrint_(){
   if(ecsMotion_){ ecsMotion_.progress(1).kill(); ecsMotion_ = null; }
-  const root = document.documentElement, prevTheme = root.getAttribute('data-theme');
+  const root = document.documentElement, prevTheme = root.getAttribute('data-theme'), el = document.getElementById('view-ecostats');
   root.setAttribute('data-theme', 'light'); document.body.classList.add('ecs-print');
-  const restore = ()=>{ document.body.classList.remove('ecs-print'); if(prevTheme) root.setAttribute('data-theme', prevTheme); else root.removeAttribute('data-theme'); window.removeEventListener('afterprint', restore); };
+  const det = el.querySelector('details.ecs-card'), wasOpen = det && det.open; if(det) det.open = true;
+  const restore = ()=>{ document.body.classList.remove('ecs-print'); if(prevTheme) root.setAttribute('data-theme', prevTheme); else root.removeAttribute('data-theme'); if(det) det.open = wasOpen; window.removeEventListener('afterprint', restore); ecsDrawCharts_(el); };
   window.addEventListener('afterprint', restore);
-  setTimeout(()=>{ window.print(); setTimeout(restore, 500); }, 50);
+  setTimeout(()=>{ ecsDrawCharts_(el); window.print(); setTimeout(restore, 500); }, 60);
 }
 
 /* ================= DASHBOARD ================= */
