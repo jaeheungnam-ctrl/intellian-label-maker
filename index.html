@@ -6905,6 +6905,7 @@ async function handleExcelImport(file){
     const sheet = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
     if(!rows.length){ alert('엑셀에서 데이터를 찾지 못했습니다.'); return; }
+    if(isPlmActivitySheet_(rows)){ openPlmReview_(buildPlmImport_(rows)); return; }
 
     // '번호'(문서번호=ECO/문서 키) 기준으로 그룹핑 — 활동명이 달라도 같은 번호면 하나의 업무로 합침
     const groups = {};
@@ -6949,6 +6950,113 @@ async function handleExcelImport(file){
     console.error('엑셀 업로드 오류:', err);
     alert('엑셀 파일을 읽는 중 오류가 발생했습니다. 파일 형식을 확인해 주세요.');
   }
+}
+
+// ---- PLM "활동 목록" 엑셀(구분·ECO 번호·활동·활동상태·수신일·완료일) 가져오기 ----
+// 보드의 수신일은 보드로 옮긴 날이라 실제 ECN 도달일이 아니다 → PLM 값으로 맞춘다(사용자 요청 2026-10-19).
+// 한 번호 밑에 활동이 여러 줄이므로 번호별로 묶는다(사용자 확인):
+//  · 대상: 구분이 ECN(E00…)·신규코드등록(NPO…)인 건. 전부 취소된 건은 뺀다.
+//  · 수신일 = "업무 할당" 활동의 수신일(없으면 가장 빠른 수신일) = 우리 팀에 도달한 날
+//  · 완료일 = 취소 뺀 모든 활동이 완료됐을 때 가장 늦은 완료일. 하나라도 남았으면 미완료(남은 건)
+//  · 보드에 이미 있는 건: 수신일·완료일만 바꾼다(상태·제목·담당자 등은 그대로). 보드 상태와 PLM 완료 여부가 다르면 목록으로 알려 준다.
+//  · 보드에 없는 건: 새로 등록(담당자 = 첫 번째 팀원(u1), MODEL 미분류, 완료면 체크 항목 모두 체크).
+function plmOwner_(){ const u = USERS.find(u=> u.id === 'u1') || USERS.find(u=> /^nam$/i.test(u.name||'')); return u ? u.name : 'Nam'; } // 사용자 지정: NAM(USER1)
+function isPlmActivitySheet_(rows){ const r = rows[0] || {}; return ['구분','ECO 번호','활동','활동상태','수신일','완료일'].every(k=> k in r); }
+function buildPlmImport_(rows){
+  const groups = new Map(), skippedKinds = {};
+  rows.forEach(r=>{
+    const doc = String(r['ECO 번호']||'').trim(), kind = String(r['구분']||'').trim();
+    if(!doc) return;
+    if(kind !== 'ECN' && kind !== '신규코드등록'){ skippedKinds[kind] = (skippedKinds[kind]||0) + 1; return; }
+    if(!groups.has(doc)) groups.set(doc, {kind, rows:[]});
+    groups.get(doc).rows.push(r);
+  });
+  const toCreate = [], toUpdate = [], statusDiffs = [], cancelled = [];
+  groups.forEach(({kind, rows:rs}, doc)=>{
+    const acts = rs.filter(r=> String(r['활동상태']).trim() !== '취소됨');
+    if(!acts.length || rs.every(r=> String(r['문서상태']).trim() === '취소됨')){ cancelled.push(doc); return; }
+    const d = v=> excelDateToStr(v);
+    const assign = acts.find(r=> /업무 할당/.test(r['활동']) && d(r['수신일']));
+    const recvs = acts.map(r=> d(r['수신일'])).filter(Boolean).sort();
+    const receivedDate = assign ? d(assign['수신일']) : (recvs[0] || '');
+    const left = acts.filter(r=> String(r['활동상태']).trim() !== '완료됨');
+    const done = !left.length;
+    const endDate = done ? (acts.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
+    const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: kind === 'ECN' ? 'ECO' : 'MDM', receivedDate, endDate, done,
+      left: left.map(r=> `${String(r['활동']).trim()}(${String(r['활동상태']).trim()})`)};
+    const existing = TASKS.find(t=> t.docNumber === doc);
+    if(existing){
+      toUpdate.push({existing, plm});
+      if((existing.status === '완료') !== done) statusDiffs.push({existing, plm});
+    } else toCreate.push(plm);
+  });
+  return {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds};
+}
+function openPlmReview_(res){
+  const {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds} = res;
+  const overlay = document.getElementById('overlay'), modal = document.getElementById('modal');
+  const sixMonthsAgo = Date.now() - SIX_MONTHS_MS;
+  const autoDelay = [...toCreate.filter(c=> !c.done), ...toUpdate.filter(u=> u.existing.status !== '완료').map(u=> u.plm)]
+    .filter(p=> { const r = parseDueDate(p.receivedDate); return r && r.getTime() <= sixMonthsAgo; }).length;
+  const skipped = Object.entries(skippedKinds).map(([k,n])=> `${escapeHtml(k)} ${n}줄`).join(', ');
+  const dateChanged = toUpdate.filter(u=> u.existing.receivedDate !== u.plm.receivedDate || (u.plm.endDate && u.existing.endDate !== u.plm.endDate)).length;
+  modal.innerHTML = `
+    <div class="modal-x"><button class="closebtn" id="closeModal">✕</button></div>
+    <div class="modal-head">
+      <h2>PLM 활동 엑셀 반영 확인</h2>
+      <div style="font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6;">
+        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일, 완료일 = 모든 활동이 끝난 날(가장 늦은 완료일).<br>
+        · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
+        · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
+        ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
+        ${autoDelay ? `· 수신일이 6개월 넘었는데 아직 안 끝난 ${autoDelay}건은 보드 규칙대로 "장기 지연"으로 바뀝니다<br>` : ''}
+      </div>
+      <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-soft);">
+        ${statusDiffs.length ? '<button class="btn btn-ghost" id="plmDiffXlsx">상태 다른 건 엑셀로 받기</button>' : ''}
+        <button class="btn btn-ghost" id="excelCancelBtn">취소</button>
+        <button class="btn" id="plmConfirmBtn">반영하기</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="section-title">보드 상태와 PLM이 다른 건 (${statusDiffs.length}건) — 상태는 바꾸지 않았습니다. 확인 후 보드에서 직접 옮겨 주세요</div>
+      ${statusDiffs.length ? `<div class="excel-review-list">${statusDiffs.map(({existing, plm})=> `
+        <div class="excel-review-row"><div class="excel-review-main" style="flex-wrap:wrap; gap:6px 10px;">
+          <span class="mono muted-cell">${escapeHtml(plm.doc)}</span><span class="excel-review-title">${escapeHtml(existing.title)}</span>
+          <span style="font-size:12px;">보드 <b>${escapeHtml(existing.status)}</b> ↔ PLM <b>${plm.done ? '모든 활동 완료 ('+escapeHtml(plm.endDate)+')' : '남은 활동: '+escapeHtml(plm.left.join(', '))}</b></span>
+        </div></div>`).join('')}</div>` : '<div style="font-size:12.5px; color:var(--muted);">없습니다.</div>'}
+    </div>`;
+  overlay.classList.add('open');
+  document.getElementById('closeModal').addEventListener('click', ()=>{ closeModal(); renderCurrent(); });
+  document.getElementById('excelCancelBtn').addEventListener('click', ()=>{ closeModal(); renderCurrent(); });
+  document.getElementById('plmDiffXlsx')?.addEventListener('click', ()=>{
+    const ws = XLSX.utils.json_to_sheet(statusDiffs.map(({existing, plm})=>({'번호':plm.doc, '제목':existing.title, '보드 상태':existing.status, 'PLM':plm.done ? '모든 활동 완료' : '남은 활동 있음', 'PLM 완료일':plm.endDate, '남은 활동':plm.left.join(', '), 'PLM 수신일':plm.receivedDate})));
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '상태다른건'); XLSX.writeFile(wb, 'PLM_보드_상태다른건.xlsx');
+  });
+  document.getElementById('plmConfirmBtn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('plmConfirmBtn'); btn.disabled = true; btn.textContent = '반영 중…';
+    const owner = plmOwner_();
+    if(toCreate.length) await ensureModelKnown('미분류');
+    toCreate.forEach((c, i)=>{
+      const status = c.done ? '완료' : '진행 중';
+      const blank = {}; checklistFor(c.type).forEach(it=>{ blank[it.key] = c.done; });
+      TASKS.push({
+        // id의 숫자 = 생성 시각으로 쓰이므로(NEW 표시·오늘 등록) 지금이 아니라 실제 수신일로 — 과거 건 수백 개에 NEW가 붙지 않게
+        id: 't' + ((parseDueDate(c.receivedDate) || new Date(0)).getTime()) + '_' + i + Math.random().toString(36).slice(2,6),
+        title: c.title, model: '미분류', assignee: owner, docNumber: c.doc, note: '', status,
+        dueRequest: '', receivedDate: c.receivedDate, endDate: c.endDate, type: c.type,
+        ecnStep: c.type === 'ECO' ? 'assigned' : 'na', actionItems: blank,
+        author: currentUserLabel(), authorId: currentUserId, comments: [], delayReason: null, delayOverrideAt: null
+      });
+    });
+    toUpdate.forEach(({existing, plm})=>{
+      if(plm.receivedDate) existing.receivedDate = plm.receivedDate;
+      if(plm.endDate) existing.endDate = plm.endDate;
+    });
+    applyAutomationRules();
+    await persist();
+    await logActivity('excel', `PLM 활동 엑셀로 <b>${toCreate.length}건</b>을 새로 등록하고 <b>${toUpdate.length}건</b>의 수신일·완료일을 PLM 값으로 맞췄습니다.`, null);
+    closeModal(); renderCurrent();
+  });
 }
 
 let pendingExcelReview = null;
