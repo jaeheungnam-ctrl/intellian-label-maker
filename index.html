@@ -3515,7 +3515,7 @@ function shareLinkUrl_(key, exp, page){
   let u = location.origin + location.pathname + '#view=' + key + '.' + exp;
   if(page && page !== 'dashboard'){
     u += '&page=' + encodeURIComponent(page);
-    if(page === 'ecostats' && ecsFrom_) u += '&es=' + [ecsTab_, ecsBasis_, ecsFrom_, ecsTo_].join('.');
+    if(page === 'ecostats' && ecsFrom_) u += '&es=' + [ecsTab_, ecsBasis_, ecsFrom_, ecsTo_, ecsStart_].join('.');
   }
   return u;
 }
@@ -4966,18 +4966,21 @@ function renderCurrent(){
 // 보드 업무 중 유형 ECO(=ECN, E00…)·MDM(=신규코드등록, NPO…)을 탭으로 나눠, 수신일(=도달일)→완료일 달력 일수를 본다(사용자 확인 2026-10-19).
 // 기준 "도달일": 기간 안에 도달한 건 → 그중 완료·남은 건·소요일. 기준 "완료일": 기간 안에 완료한 건의 소요일 + 기간 끝 시점까지 도달했는데 아직 안 끝난 건.
 // 차트는 카드의 실제 픽셀 크기로 그린다(viewBox로 늘리면 글씨·막대가 같이 커짐). 창 크기가 바뀌면 애니메이션 없이 다시 그림.
-var ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
+var ecsStart_ = 'assign', ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
 const ECS_TABS_ = {ECO:'ECN', MDM:'신규코드등록'};
-(()=>{ const p = (FB.viewEs || '').split('.'), ymd = /^\d{4}-\d{2}-\d{2}$/; if(p.length !== 4) return;
+(()=>{ const p = (FB.viewEs || '').split('.'), ymd = /^\d{4}-\d{2}-\d{2}$/; if(p.length < 4) return; if(p[4] === 'bom' || p[4] === 'assign') ecsStart_ = p[4];
   if(ECS_TABS_[p[0]]) ecsTab_ = p[0]; if(p[1] === 'recv' || p[1] === 'end') ecsBasis_ = p[1]; if(ymd.test(p[2])) ecsFrom_ = p[2]; if(ymd.test(p[3])) ecsTo_ = p[3]; })();
 const ECS_HIST_ = [['0~7일',0,7],['8~14일',8,14],['15~30일',15,30],['31~60일',31,60],['61~90일',61,90],['91일+',91,1e9]];
 const ECS_AGE_ = [['30일 이내',0,30],['31~60일',31,60],['61~90일',61,90],['91~180일',91,180],['180일 넘음',181,1e9]];
+function ecsBomMode_(){ return ecsTab_ === 'ECO' && ecsStart_ === 'bom'; }
+function ecsStartOf_(t){ return ecsBomMode_() ? (t.bomRecvDate || '') : (ecsTab_ === 'ECO' ? (t.assignDate || t.receivedDate) : t.receivedDate); }
+function ecsStartLabel_(){ return ecsTab_ !== 'ECO' ? '도달' : (ecsStart_ === 'bom' ? 'BOM 변경 수신' : '업무 할당'); }
 function ecsYmd_(d){ return d ? d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') : ''; }
 function ecsData_(){
   const t0 = new Date(); if(!ecsFrom_) ecsFrom_ = t0.getFullYear() + '-01-01'; if(!ecsTo_) ecsTo_ = ecsYmd_(t0);
   const from = parseDueDate(ecsFrom_), to = parseDueDate(ecsTo_), today = new Date(); today.setHours(0,0,0,0);
   const all = TASKS.filter(t=> t.type === ecsTab_).map(t=>{
-    const recv = parseDueDate(t.receivedDate), end = parseDueDate(t.endDate), done = t.status === '완료';
+    const recv = parseDueDate(ecsStartOf_(t)), end = parseDueDate(t.endDate), done = t.status === '완료';
     return {t, recv, end, done, days: (done && recv && end && end >= recv) ? Math.round((end - recv) / 864e5) : null, age: (!done && recv) ? Math.round((today - recv) / 864e5) : null};
   });
   const inR = d=> !!d && (!from || d >= from) && (!to || d <= to);
@@ -5104,12 +5107,12 @@ function renderEcoStats(){
   const total = D.doneList.length + D.openList.length, rate = total ? Math.round(D.doneList.length / total * 100) : 0, in30 = st.n ? Math.round(st.in30 / st.n * 100) : 0;
   const over60 = D.openList.filter(x=> (x.age || 0) > 60).length, f1 = v=> String(Math.round(v * 10) / 10);
   const fmtD = d=> d ? dashKey(d) : '—', esc = escapeHtml;
-  const notes = [D.noRecv ? '수신일 없는 ' + D.noRecv + '건 제외' : '', D.noEnd ? '완료일 이상 ' + D.noEnd + '건은 소요일 계산 제외' : ''].filter(Boolean).join(' · ');
+  const notes = [D.noRecv ? (ecsBomMode_() ? 'BOM 변경 수신일 없는 ' : '수신일 없는 ') + D.noRecv + '건 제외' : '', D.noEnd ? '완료일 이상 ' + D.noEnd + '건은 소요일 계산 제외' : ''].filter(Boolean).join(' · ');
   const ageIdx = a=> ECS_AGE_.findIndex(([, lo, hi])=> a >= lo && a <= hi);
   const agePill = x=> x.age == null ? '—' : '<span class="ecs-pill"><i style="background:var(--ecs-a' + (ageIdx(x.age) + 1) + ')"></i>' + x.age + '일째</span>';
   const row = x=> '<tr data-id="' + esc(x.t.id) + '"><td class="mono">' + esc(x.t.docNumber || '') + '</td><td class="ttl" title="' + esc(x.t.title || '') + '">' + esc(x.t.title || '') + '</td><td>' + esc(x.t.assignee || '미배정') + '</td><td class="mono">' + fmtD(x.recv) + '</td><td class="mono">' + (x.done ? fmtD(x.end) : '—') + '</td><td class="num">' + (x.done ? (x.days != null ? '<b>' + x.days + '</b>일' : '—') : agePill(x)) + '</td><td><span class="ecs-pill">' + esc(x.t.status || '') + '</span></td></tr>';
-  const thead = '<thead><tr><th>번호</th><th>제목</th><th>담당자</th><th>도달일</th><th>완료일</th><th class="num">소요 / 경과</th><th>상태</th></tr></thead>';
-  const theadOpen = '<thead><tr><th>번호</th><th>제목</th><th>도달일</th><th class="num">경과</th><th>상태</th></tr></thead>';
+  const thead = '<thead><tr><th>번호</th><th>제목</th><th>담당자</th><th>' + ecsStartLabel_() + '일</th><th>완료일</th><th class="num">소요 / 경과</th><th>상태</th></tr></thead>';
+  const theadOpen = '<thead><tr><th>번호</th><th>제목</th><th>' + ecsStartLabel_() + '일</th><th class="num">경과</th><th>상태</th></tr></thead>';
   const rowOpen = x=> '<tr data-id="' + esc(x.t.id) + '"><td class="mono">' + esc(x.t.docNumber || '') + '</td><td class="ttl" title="' + esc(x.t.title || '') + '">' + esc(x.t.title || '') + '</td><td class="mono">' + fmtD(x.recv) + '</td><td class="num">' + agePill(x) + '</td><td><span class="ecs-pill">' + esc(x.t.status || '') + '</span></td></tr>';
   const openSorted = D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1)), allSorted = D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0));
   const agTot = D.aging.reduce((a, h)=> a + h.n, 0), topMax = D.top.length ? D.top[0].days : 1;
@@ -5117,17 +5120,18 @@ function renderEcoStats(){
   el.innerHTML = '<div class="ecs-root">'
   + '<div class="ecs-bar">'
     + '<div class="ecs-seg" data-k="tab">' + Object.entries(ECS_TABS_).map(([k, v])=> '<button type="button" data-v="' + k + '" class="' + (ecsTab_ === k ? 'on' : '') + '">' + v + '</button>').join('') + '</div>'
-    + '<div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="' + (ecsBasis_ === 'recv' ? 'on' : '') + '">도달일 기준</button><button type="button" data-v="end" class="' + (ecsBasis_ === 'end' ? 'on' : '') + '">완료일 기준</button></div>'
+    + (ecsTab_ === 'ECO' ? '<div class="ecs-seg" data-k="start" title="소요일을 어디서부터 셀지"><button type="button" data-v="assign" class="' + (ecsStart_ === 'assign' ? 'on' : '') + '">업무 할당부터</button><button type="button" data-v="bom" class="' + (ecsStart_ === 'bom' ? 'on' : '') + '">BOM 변경 수신부터</button></div>' : '')
+    + '<div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="' + (ecsBasis_ === 'recv' ? 'on' : '') + '">' + (ecsTab_ === 'ECO' ? '시작일' : '도달일') + ' 기준</button><button type="button" data-v="end" class="' + (ecsBasis_ === 'end' ? 'on' : '') + '">완료일 기준</button></div>'
     + '<span class="ecs-date"><input type="date" id="ecsFrom" value="' + ecsFrom_ + '" aria-label="시작일"> – <input type="date" id="ecsTo" value="' + ecsTo_ + '" aria-label="종료일"></span>'
     + '<span class="ecs-chips"><button type="button" data-q="year">올해</button><button type="button" data-q="q">이번 분기</button><button type="button" data-q="3m">최근 3개월</button><button type="button" data-q="m">이번 달</button></span>'
     + '<span class="ecs-out"><button type="button" id="ecsXlsx">' + ico.x + '엑셀</button><button type="button" id="ecsPdf">' + ico.p + 'PDF</button></span>'
   + '</div>'
-  + '<div class="ecs-scope">' + esc(ECS_TABS_[ecsTab_]) + ' · ' + esc(ecsFrom_) + ' ~ ' + esc(ecsTo_) + ' · ' + (ecsBasis_ === 'recv' ? '기간 안에 도달한 건' : '기간 안에 완료한 건 (남은 건 = 기간 끝까지 도달했는데 안 끝난 건)') + ' · 소요일 = 도달일→완료일 달력 일수' + (notes ? ' · ' + esc(notes) : '') + '</div>'
+  + '<div class="ecs-scope">' + esc(ECS_TABS_[ecsTab_]) + ' · ' + esc(ecsFrom_) + ' ~ ' + esc(ecsTo_) + ' · ' + (ecsBasis_ === 'recv' ? '기간 안에 ' + ecsStartLabel_() + '된 건' : '기간 안에 완료한 건 (남은 건 = 기간 끝까지 ' + ecsStartLabel_() + '됐는데 안 끝난 건)') + ' · 소요일 = ' + ecsStartLabel_() + '일→완료일 달력 일수' + (notes ? ' · ' + esc(notes) : '') + '</div>'
   + '<div class="ecs-bento">'
-    + '<div class="ecs-card c5 ecs-hero"><div><div class="ecs-eyebrow">도달 → 생산기술 완료까지 평균</div><div class="ecs-hero-num"><strong class="ecs-num" data-dec="1">' + f1(st.avg) + '</strong><span>일</span></div>'
+    + '<div class="ecs-card c5 ecs-hero"><div><div class="ecs-eyebrow">' + ecsStartLabel_() + ' → 생산기술 완료까지 평균</div><div class="ecs-hero-num"><strong class="ecs-num" data-dec="1">' + f1(st.avg) + '</strong><span>일</span></div>'
       + '<div class="ecs-hero-sub">중간값 <b>' + f1(st.med) + '일</b> · 가장 오래 <b>' + st.max + '일</b> · 완료 <b>' + st.n + '건</b> 기준</div></div><div class="ecs-spark" data-chart="spark"></div></div>'
     + '<div class="c7 ecs-kpis">'
-      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s1)"></span>' + (ecsBasis_ === 'recv' ? '도달' : '대상 (완료 + 남은 건)') + '</div><div class="vl"><strong class="ecs-num">' + total + '</strong><span>건</span></div><div class="ft">' + esc(ecsFrom_.slice(5).replace('-', '/')) + ' ~ ' + esc(ecsTo_.slice(5).replace('-', '/')) + '</div></div>'
+      + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s1)"></span>' + (ecsBasis_ === 'recv' ? ecsStartLabel_() : '대상 (완료 + 남은 건)') + '</div><div class="vl"><strong class="ecs-num">' + total + '</strong><span>건</span></div><div class="ft">' + esc(ecsFrom_.slice(5).replace('-', '/')) + ' ~ ' + esc(ecsTo_.slice(5).replace('-', '/')) + '</div></div>'
       + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s2)"></span>완료</div><div class="vl"><strong class="ecs-num">' + D.doneList.length + '</strong><span>건</span></div><div class="ecs-meter"><i class="ecs-mt" style="width:' + rate + '%;background:var(--ecs-s2)"></i></div><div class="ft">완료율 <b>' + rate + '%</b></div></div>'
       + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-a3)"></span>남은 건</div><div class="vl"><strong class="ecs-num">' + D.openList.length + '</strong><span>건</span></div><div class="ft">' + (over60 ? '<span class="crit">⚠ ' + over60 + '건</span>은 도달 후 60일 넘음' : '60일 넘은 건 없음') + '</div></div>'
       + '<div class="ecs-kpi"><div class="lb"><span class="dot" style="background:var(--ecs-s3)"></span>30일 안에 완료</div><div class="vl"><strong class="ecs-num">' + in30 + '</strong><span>%</span></div><div class="ecs-meter"><i class="ecs-mt" style="width:' + in30 + '%;background:var(--ecs-s3)"></i></div><div class="ft"><b>' + st.in30 + '</b> / ' + st.n + '건</div></div>'
@@ -5151,7 +5155,7 @@ function renderEcoStats(){
   ecsDrawCharts_(el);
   if(!ecsRO_ && typeof ResizeObserver !== 'undefined'){ let w = 0, tm = 0; ecsRO_ = new ResizeObserver(()=>{ const nw = el.clientWidth; if(!nw || nw === w) return; w = nw; clearTimeout(tm); tm = setTimeout(()=>{ if(currentView === 'ecostats') ecsDrawCharts_(el); }, 120); }); ecsRO_.observe(el); }
   const rerender = ()=>{ ecsAnimate_ = true; renderEcoStats(); };
-  el.querySelectorAll('.ecs-seg').forEach(g=> g.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; if(g.dataset.k === 'tab') ecsTab_ = b.dataset.v; else ecsBasis_ = b.dataset.v; rerender(); }));
+  el.querySelectorAll('.ecs-seg').forEach(g=> g.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; if(g.dataset.k === 'tab') ecsTab_ = b.dataset.v; else if(g.dataset.k === 'start') ecsStart_ = b.dataset.v; else ecsBasis_ = b.dataset.v; rerender(); }));
   el.querySelector('#ecsFrom').addEventListener('change', e=>{ ecsFrom_ = e.target.value; rerender(); });
   el.querySelector('#ecsTo').addEventListener('change', e=>{ ecsTo_ = e.target.value; rerender(); });
   el.querySelector('.ecs-chips').addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; const t = new Date(), y = t.getFullYear(), m = t.getMonth();
@@ -5181,7 +5185,7 @@ function ecsPlayMotion_(el){
 function ecsExportXlsx_(D){
   if(typeof XLSX === 'undefined'){ alert('엑셀 라이브러리를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'); return; }
   const label = ECS_TABS_[ecsTab_], st = D.st, total = D.doneList.length + D.openList.length, wb = XLSX.utils.book_new(), fmtD = d=> d ? dashKey(d) : '';
-  const sum = [['설계변경 현황', label], ['기간', ecsFrom_ + ' ~ ' + ecsTo_], ['기준', ecsBasis_ === 'recv' ? '도달일(수신일) 기준' : '완료일 기준'], ['소요일', '도달일→완료일 달력 일수'], [],
+  const sum = [['설계변경 현황', label], ['기간', ecsFrom_ + ' ~ ' + ecsTo_], ['기준', ecsBasis_ === 'recv' ? ecsStartLabel_() + '일 기준' : '완료일 기준'], ['소요일', ecsStartLabel_() + '일→완료일 달력 일수'], [],
     ['대상(완료+남은 건)', total], ['완료', D.doneList.length], ['남은 건', D.openList.length], ['완료율(%)', total ? Math.round(D.doneList.length / total * 100) : 0],
     ['평균 소요일', +st.avg.toFixed(1)], ['중간값(일)', st.med], ['가장 오래(일)', st.max], ['30일 안에 완료', st.in30], ['30일 안에 완료(%)', st.n ? Math.round(st.in30 / st.n * 100) : 0],
     [], ['수신일 없어 제외', D.noRecv], ['소요일 계산 제외(완료일 없음 등)', D.noEnd], ['만든 날', dashKey(new Date())]];
@@ -5189,7 +5193,7 @@ function ecsExportXlsx_(D){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.months.map(m=> ({'월':m.ym, '도달':m.recv, '완료':m.done, '평균 소요일':m.avg == null ? '' : +m.avg.toFixed(1), '월말 남은 건':m.backlog}))), '월별');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.hist.map(h=> ({'소요일':h.label, '건수':h.n}))), '소요일분포');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.aging.map(h=> ({'경과일':h.label, '남은 건':h.n}))), '남은건경과');
-  const rowOf = x=> ({'번호':x.t.docNumber || '', '제목':x.t.title || '', 'MODEL':x.t.model || '', '담당자':x.t.assignee || '', '도달일':fmtD(x.recv), '완료일':x.done ? fmtD(x.end) : '', '소요일':x.days ?? '', '경과일(남은 건)':x.age ?? '', '상태':x.t.status || ''});
+  const rowOf = x=> ({'번호':x.t.docNumber || '', '제목':x.t.title || '', 'MODEL':x.t.model || '', '담당자':x.t.assignee || '', [ecsStartLabel_() + '일']:fmtD(x.recv), '업무 할당 수신일':x.t.assignDate || '', 'BOM 변경 수신일':x.t.bomRecvDate || '', '완료일':x.done ? fmtD(x.end) : '', '소요일':x.days ?? '', '경과일(남은 건)':x.age ?? '', '상태':x.t.status || ''});
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1)).map(rowOf)), '남은건');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0)).map(rowOf)), '전체목록');
   XLSX.writeFile(wb, '설계변경현황_' + label + '_' + ecsFrom_ + '_' + ecsTo_ + '.xlsx');
@@ -6851,6 +6855,7 @@ function openDetail(id){
             <input type="text" id="fReceived" class="date-picker-input" value="${escapeHtml(t.receivedDate||'')}" placeholder="YYYY/MM/DD" readonly>
             <button type="button" class="date-picker-icon-btn" aria-label="달력 열기">📅</button>
           </div>
+          ${(t.assignDate || t.bomRecvDate) ? `<div style="font-size:11.5px; color:var(--muted); margin-top:6px;">PLM · 업무 할당 수신 <b>${escapeHtml(t.assignDate||'—')}</b> · BOM 변경 수신 <b>${escapeHtml(t.bomRecvDate||'—')}</b></div>` : ''}
         </div>
         <div class="field">
           <label>완료일 ${t.status==='완료' && !t.endDate? '<span class="muted-cell" style="font-weight:400;">(완료 처리 시 자동 입력)</span>' : ''}</label>
@@ -7362,15 +7367,21 @@ function buildPlmImport_(rows){
     const acts = rs.filter(r=> String(r['활동상태']).trim() !== '취소됨');
     if(!acts.length || rs.every(r=> String(r['문서상태']).trim() === '취소됨')){ cancelled.push(doc); return; }
     const d = v=> excelDateToStr(v);
+    // 업무 할당 수신일(= ECN이 우리 팀에 도달)과 BOM 변경 및 제품 발주 통제(STEP3) 수신일을 따로 둔다(사용자 요청 2026-10-20).
+    // 업무 할당 수신일이 없으면 BOM 변경 수신일 하루 전으로 정한다(사용자 지정). 둘 다 없으면 가장 빠른 수신일.
     const assign = acts.find(r=> /업무 할당/.test(r['활동']) && d(r['수신일']));
+    const bomRow = acts.find(r=> /BOM 변경 및 제품 발주 통제/.test(r['활동']) && d(r['수신일']));
+    const bomRecvDate = bomRow ? d(bomRow['수신일']) : '';
+    const dayBefore = v=>{ const x = parseDueDate(v); if(!x) return ''; x.setDate(x.getDate() - 1); return dashKey(x); };
     const recvs = acts.map(r=> d(r['수신일'])).filter(Boolean).sort();
-    const receivedDate = assign ? d(assign['수신일']) : (recvs[0] || '');
+    const assignDate = assign ? d(assign['수신일']) : (bomRecvDate ? dayBefore(bomRecvDate) : '');
+    const receivedDate = assignDate || recvs[0] || '';
     // 작업 지도서 개정·Packing List 검토는 끝나지 않아도 완료로 본다 — STEP3(BOM 변경 및 제품 발주 통제)까지가 완료 기준(사용자 확인 2026-10-19)
     const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])));
     const left = core.filter(r=> String(r['활동상태']).trim() !== '완료됨');
     const done = !left.length;
     const endDate = done ? (core.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
-    const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: kind === 'ECN' ? 'ECO' : 'MDM', receivedDate, endDate, done,
+    const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: kind === 'ECN' ? 'ECO' : 'MDM', receivedDate, assignDate, bomRecvDate, endDate, done,
       left: left.map(r=> `${String(r['활동']).trim()}(${String(r['활동상태']).trim()})`)};
     const existing = TASKS.find(t=> t.docNumber === doc);
     if(existing){
@@ -7387,13 +7398,13 @@ function openPlmReview_(res){
   const autoDelay = [...toCreate.filter(c=> !c.done), ...toUpdate.filter(u=> u.existing.status !== '완료').map(u=> u.plm)]
     .filter(p=> { const r = parseDueDate(p.receivedDate); return r && r.getTime() <= sixMonthsAgo; }).length;
   const skipped = Object.entries(skippedKinds).map(([k,n])=> `${escapeHtml(k)} ${n}줄`).join(', ');
-  const dateChanged = toUpdate.filter(u=> u.existing.receivedDate !== u.plm.receivedDate || (u.plm.endDate && u.existing.endDate !== u.plm.endDate)).length;
+  const dateChanged = toUpdate.filter(u=> u.existing.receivedDate !== u.plm.receivedDate || (u.plm.bomRecvDate && u.existing.bomRecvDate !== u.plm.bomRecvDate) || (u.plm.endDate && u.existing.endDate !== u.plm.endDate)).length;
   modal.innerHTML = `
     <div class="modal-x"><button class="closebtn" id="closeModal">✕</button></div>
     <div class="modal-head">
       <h2>PLM 활동 엑셀 반영 확인</h2>
       <div style="font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6;">
-        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
+        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일(없으면 BOM 변경 수신일 하루 전), BOM 변경 수신일도 따로 저장, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
         · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
         · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
         ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
@@ -7431,13 +7442,15 @@ function openPlmReview_(res){
         // id의 숫자 = 생성 시각으로 쓰이므로(NEW 표시·오늘 등록) 지금이 아니라 실제 수신일로 — 과거 건 수백 개에 NEW가 붙지 않게
         id: 't' + ((parseDueDate(c.receivedDate) || new Date(0)).getTime()) + '_' + i + Math.random().toString(36).slice(2,6),
         title: c.title, model: '미분류', assignee: owner, docNumber: c.doc, note: '', status,
-        dueRequest: '', receivedDate: c.receivedDate, endDate: c.endDate, type: c.type,
+        dueRequest: '', receivedDate: c.receivedDate, assignDate: c.assignDate, bomRecvDate: c.bomRecvDate, endDate: c.endDate, type: c.type,
         ecnStep: c.type === 'ECO' ? 'assigned' : 'na', actionItems: blank,
         author: currentUserLabel(), authorId: currentUserId, comments: [], delayReason: null, delayOverrideAt: null
       });
     });
     toUpdate.forEach(({existing, plm})=>{
       if(plm.receivedDate) existing.receivedDate = plm.receivedDate;
+      if(plm.assignDate) existing.assignDate = plm.assignDate;
+      if(plm.bomRecvDate) existing.bomRecvDate = plm.bomRecvDate;
       if(plm.endDate) existing.endDate = plm.endDate;
     });
     applyAutomationRules();
