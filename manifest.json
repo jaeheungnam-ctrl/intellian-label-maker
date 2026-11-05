@@ -6,15 +6,47 @@
   "background_color": "#2f6f4f",
   "theme_color": "#2f6f4f",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ],
   "shortcuts": [
-    { "name": "새 업무 추가", "url": "./?go=add", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "SAP 작지번호 조회", "url": "./?go=mesorder", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "EBOM ↔ SAP BOM 비교", "url": "./?go=sapbomcompare", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "라벨데이터 변환기", "url": "./?go=labeldata", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "라벨 미리보기", "url": "./?go=labelpreview", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] },
-    { "name": "전체 목록", "url": "./?go=list", "icons": [{ "src": "icon-192.png", "sizes": "192x192" }] }
+    {
+      "name": "새 업무 추가",
+      "url": "./?go=add",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "SAP 작지번호 조회",
+      "url": "./?go=mesorder",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "EBOM ↔ SAP BOM 비교",
+      "url": "./?go=sapbomcompare",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }
