@@ -8457,7 +8457,16 @@ renderNotifyToggleBtn();
   await loadTasks();
   await loadLabelLink();
   if(LABEL_LINK && !linkedTask()) await setLabelLink(null); // 연결된 업무가 사라졌으면 정리
+  // 작업 표시줄 아이콘 오른쪽 클릭 메뉴(manifest.json shortcuts)로 열면 ?go=화면 → 그 화면으로 바로 시작
+  const GO = new URLSearchParams(location.search).get('go') || '';
+  if(GO){
+    const qs = new URLSearchParams(location.search); qs.delete('go');
+    history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs : '') + location.hash);
+    const gb = /^[a-z_]+$/i.test(GO) && document.querySelector('#navList .navbtn[data-view="' + GO + '"]');
+    if(gb && gb.style.display !== 'none'){ currentView = GO; document.querySelectorAll('.navbtn').forEach(b=> b.classList.toggle('active', b === gb)); }
+  }
   renderCurrent();
+  if(GO === 'add' && !window.PPE_VIEW_ONLY && !document.body.classList.contains('guest-mode')) openAddForm();
   startBoardShared();
   // 창마다 확인 시점을 흩어 모든 창이 같은 순간에 서버를 부르지 않게 한다(서버 동시 처리 한도 보호).
   setTimeout(()=>setInterval(refreshBoardShared,15000), Math.random()*15000);
