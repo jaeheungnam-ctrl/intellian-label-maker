@@ -7403,7 +7403,7 @@ function buildPlmImport_(rows){
     const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])) && String(r['단계']||'').trim() !== '사후활동'); // 신규코드등록 사후활동은 완료 기준에서 뺌(사용자 2026-11-17)
     const left = core.filter(r=> String(r['활동상태']).trim() !== '완료됨');
     const done = !left.length;
-    const waiting = !done && left.every(r=> !d(r['수신일'])); // 남은 활동이 아직 우리 팀에 안 넘어옴 → 우리 팀 기준 '시작 전'(사용자 2026-11-17)
+    const waiting = !done && left.every(r=> !d(r['수신일'])); // 남은 활동이 아직 우리 팀에 안 넘어옴 → '업무할당 완료'(사용자 2026-11-17)
     const endDate = done ? (core.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
     // 사후활동만 남은 건: 새로 등록할 때만 수신일 = 가장 이른 등록일, 완료일 = 사후활동이 처음 도착한 날(본 단계가 끝난 날)
     const newRecv = onlyPost ? (rs.map(r=> d(r['등록일'])).filter(Boolean).sort()[0] || '') : '', newEnd = onlyPost ? (acts.map(r=> d(r['수신일'])).filter(Boolean).sort()[0] || '') : '';
@@ -7434,7 +7434,7 @@ function openPlmReview_(res){
         ECN·MCN·신규코드등록·Serial Master 등록 건을 번호별로 묶었습니다(MCN은 ECO, Serial Master 등록은 기타업무로 · 신규코드등록의 사후활동은 완료 기준에서 제외). 수신일 = "업무 할당" 활동의 수신일(없으면 BOM 변경 수신일 하루 전), BOM 변경 수신일도 따로 저장, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
         · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
         · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
-        ${toWait.length ? `· <b>보드에서 '진행 중'인데 PLM에서 아직 우리 팀에 안 넘어온 ${toWait.length}건 → '시작 전'으로 바꿈</b> (남은 활동이 모두 수신일 없음)<br>` : ''}${toCreate.some(c=>c.waiting) ? `· 새 건 중 아직 안 넘어온 ${toCreate.filter(c=>c.waiting).length}건은 '시작 전'으로 등록<br>` : ''}
+        ${toWait.length ? `· <b>보드에서 '진행 중'인데 PLM에서 아직 우리 팀에 안 넘어온 ${toWait.length}건 → '업무할당 완료'로 바꿈</b> (남은 활동이 모두 수신일 없음)<br>` : ''}${toCreate.some(c=>c.waiting) ? `· 새 건 중 아직 안 넘어온 ${toCreate.filter(c=>c.waiting).length}건은 '업무할당 완료'로 등록<br>` : ''}
         ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
         ${autoDelay ? `· 수신일이 6개월 넘었는데 아직 안 끝난 ${autoDelay}건은 보드 규칙대로 "장기 지연"으로 바뀝니다<br>` : ''}
       </div>
@@ -7464,7 +7464,7 @@ function openPlmReview_(res){
     const owner = plmOwner_();
     if(toCreate.length) await ensureModelKnown('미분류');
     toCreate.forEach((c, i)=>{
-      const status = c.done ? '완료' : c.waiting ? '시작 전' : '진행 중';
+      const status = c.done ? '완료' : c.waiting ? '업무할당 완료' : '진행 중';
       const blank = {}; checklistFor(c.type).forEach(it=>{ blank[it.key] = c.done; });
       TASKS.push({
         // id의 숫자 = 생성 시각으로 쓰이므로(NEW 표시·오늘 등록) 지금이 아니라 실제 수신일로 — 과거 건 수백 개에 NEW가 붙지 않게
@@ -7481,10 +7481,10 @@ function openPlmReview_(res){
       if(plm.bomRecvDate) existing.bomRecvDate = plm.bomRecvDate;
       if(plm.endDate) existing.endDate = plm.endDate;
     });
-    toWait.forEach(({existing})=>{ existing.status = '시작 전'; });
+    toWait.forEach(({existing})=>{ existing.status = '업무할당 완료'; });
     applyAutomationRules();
     await persist();
-    await logActivity('excel', `PLM 활동 엑셀로 <b>${toCreate.length}건</b>을 새로 등록하고 <b>${toUpdate.length}건</b>의 수신일·완료일을 PLM 값으로 맞췄습니다.` + (toWait.length ? ` 아직 우리 팀에 안 넘어온 <b>${toWait.length}건</b>은 '시작 전'으로 바꿨습니다(${toWait.map(u=> escapeHtml(u.plm.doc)).join(', ')}).` : ''), null);
+    await logActivity('excel', `PLM 활동 엑셀로 <b>${toCreate.length}건</b>을 새로 등록하고 <b>${toUpdate.length}건</b>의 수신일·완료일을 PLM 값으로 맞췄습니다.` + (toWait.length ? ` 아직 우리 팀에 안 넘어온 <b>${toWait.length}건</b>은 '업무할당 완료'로 바꿨습니다(${toWait.map(u=> escapeHtml(u.plm.doc)).join(', ')}).` : ''), null);
     closeModal(); renderCurrent();
   });
 }
