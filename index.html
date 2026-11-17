@@ -7367,13 +7367,17 @@ async function handleExcelImport(file){
 //  · 보드에 이미 있는 건: 수신일·완료일만 바꾼다(상태·제목·담당자 등은 그대로). 보드 상태와 PLM 완료 여부가 다르면 목록으로 알려 준다.
 //  · 보드에 없는 건: 새로 등록(담당자 = 첫 번째 팀원(u1), MODEL 미분류, 완료면 체크 항목 모두 체크).
 function plmOwner_(){ const u = USERS.find(u=> u.id === 'u1') || USERS.find(u=> /^nam$/i.test(u.name||'')); return u ? u.name : 'Nam'; } // 사용자 지정: NAM(USER1)
-function isPlmActivitySheet_(rows){ const r = rows[0] || {}; return ['구분','ECO 번호','활동','활동상태','수신일','완료일'].every(k=> k in r); }
+function isPlmActivitySheet_(rows){ const r = rows[0] || {}; return ['구분','ECO 번호','활동','활동상태','수신일','완료일'].every(k=> k in r) || ['구분','번호','현재활동','활동상태','수신일','완료일'].every(k=> k in r); }
+// PLM WorkList 형식(번호·현재활동·문서제목) → 활동 목록 형식 칸 이름으로 맞춤
+function plmNormRows_(rows){ return rows.map(r=> ('ECO 번호' in r) ? r : Object.assign({}, r, {'ECO 번호': r['번호'], '활동': r['현재활동'], '제목': r['문서제목']})); }
+const PLM_KIND_TYPE_ = {'ECN':'ECO', 'MCN':'ECO', '신규코드등록':'MDM', 'Serial Master 등록':'기타업무'}; // MCN·Serial Master 등록 추가(사용자 2026-11-17)
 function buildPlmImport_(rows){
+  rows = plmNormRows_(rows);
   const groups = new Map(), skippedKinds = {};
   rows.forEach(r=>{
     const doc = String(r['ECO 번호']||'').trim(), kind = String(r['구분']||'').trim();
     if(!doc) return;
-    if(kind !== 'ECN' && kind !== '신규코드등록'){ skippedKinds[kind] = (skippedKinds[kind]||0) + 1; return; }
+    if(!PLM_KIND_TYPE_[kind]){ skippedKinds[kind] = (skippedKinds[kind]||0) + 1; return; }
     if(!groups.has(doc)) groups.set(doc, {kind, rows:[]});
     groups.get(doc).rows.push(r);
   });
@@ -7382,21 +7386,24 @@ function buildPlmImport_(rows){
     const acts = rs.filter(r=> String(r['활동상태']).trim() !== '취소됨');
     if(!acts.length || rs.every(r=> String(r['문서상태']).trim() === '취소됨')){ cancelled.push(doc); return; }
     const d = v=> excelDateToStr(v);
+    const isPost = r=> String(r['단계']||'').trim() === '사후활동', base = acts.filter(r=> !isPost(r)), onlyPost = !base.length; // 사후활동 날짜는 수신일·완료일 계산에 안 씀
     // 업무 할당 수신일(= ECN이 우리 팀에 도달)과 BOM 변경 및 제품 발주 통제(STEP3) 수신일을 따로 둔다(사용자 요청 2026-10-20).
     // 업무 할당 수신일이 없으면 BOM 변경 수신일 하루 전으로 정한다(사용자 지정). 둘 다 없으면 가장 빠른 수신일.
-    const assign = acts.find(r=> /업무 할당/.test(r['활동']) && d(r['수신일']));
-    const bomRow = acts.find(r=> /BOM 변경 및 제품 발주 통제/.test(r['활동']) && d(r['수신일']));
+    const assign = base.find(r=> /업무 할당/.test(r['활동']) && d(r['수신일']));
+    const bomRow = base.find(r=> /BOM 변경 및 제품 발주 통제/.test(r['활동']) && d(r['수신일']));
     const bomRecvDate = bomRow ? d(bomRow['수신일']) : '';
     const dayBefore = v=>{ const x = parseDueDate(v); if(!x) return ''; x.setDate(x.getDate() - 1); return dashKey(x); };
-    const recvs = acts.map(r=> d(r['수신일'])).filter(Boolean).sort();
+    const recvs = base.map(r=> d(r['수신일'])).filter(Boolean).sort();
     const assignDate = assign ? d(assign['수신일']) : (bomRecvDate ? dayBefore(bomRecvDate) : '');
     const receivedDate = assignDate || recvs[0] || '';
     // 작업 지도서 개정·Packing List 검토는 끝나지 않아도 완료로 본다 — STEP3(BOM 변경 및 제품 발주 통제)까지가 완료 기준(사용자 확인 2026-10-19)
-    const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])));
+    const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])) && String(r['단계']||'').trim() !== '사후활동'); // 신규코드등록 사후활동은 완료 기준에서 뺌(사용자 2026-11-17)
     const left = core.filter(r=> String(r['활동상태']).trim() !== '완료됨');
     const done = !left.length;
     const endDate = done ? (core.map(r=> d(r['완료일'])).filter(Boolean).sort().pop() || '') : '';
-    const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: kind === 'ECN' ? 'ECO' : 'MDM', receivedDate, assignDate, bomRecvDate, endDate, done,
+    // 사후활동만 남은 건: 새로 등록할 때만 수신일 = 가장 이른 등록일, 완료일 = 사후활동이 처음 도착한 날(본 단계가 끝난 날)
+    const newRecv = onlyPost ? (rs.map(r=> d(r['등록일'])).filter(Boolean).sort()[0] || '') : '', newEnd = onlyPost ? (acts.map(r=> d(r['수신일'])).filter(Boolean).sort()[0] || '') : '';
+    const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: PLM_KIND_TYPE_[kind], receivedDate, assignDate, bomRecvDate, endDate, done, newRecv, newEnd,
       left: left.map(r=> `${String(r['활동']).trim()}(${String(r['활동상태']).trim()})`)};
     const existing = TASKS.find(t=> t.docNumber === doc);
     if(existing){
@@ -7419,7 +7426,7 @@ function openPlmReview_(res){
     <div class="modal-head">
       <h2>PLM 활동 엑셀 반영 확인</h2>
       <div style="font-size:12.5px; color:var(--muted); margin-top:6px; line-height:1.6;">
-        ECN·신규코드등록 건을 번호별로 묶었습니다. 수신일 = "업무 할당" 활동의 수신일(없으면 BOM 변경 수신일 하루 전), BOM 변경 수신일도 따로 저장, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
+        ECN·MCN·신규코드등록·Serial Master 등록 건을 번호별로 묶었습니다(MCN은 ECO, Serial Master 등록은 기타업무로 · 신규코드등록의 사후활동은 완료 기준에서 제외). 수신일 = "업무 할당" 활동의 수신일(없으면 BOM 변경 수신일 하루 전), BOM 변경 수신일도 따로 저장, 완료일 = STEP3(BOM 변경 및 제품 발주 통제)까지 끝난 날(작업 지도서 개정·Packing List 검토는 완료 기준에서 제외).<br>
         · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
         · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
         ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
@@ -7455,9 +7462,9 @@ function openPlmReview_(res){
       const blank = {}; checklistFor(c.type).forEach(it=>{ blank[it.key] = c.done; });
       TASKS.push({
         // id의 숫자 = 생성 시각으로 쓰이므로(NEW 표시·오늘 등록) 지금이 아니라 실제 수신일로 — 과거 건 수백 개에 NEW가 붙지 않게
-        id: 't' + ((parseDueDate(c.receivedDate) || new Date(0)).getTime()) + '_' + i + Math.random().toString(36).slice(2,6),
+        id: 't' + ((parseDueDate(c.receivedDate || c.newRecv) || new Date(0)).getTime()) + '_' + i + Math.random().toString(36).slice(2,6),
         title: c.title, model: '미분류', assignee: owner, docNumber: c.doc, note: '', status,
-        dueRequest: '', receivedDate: c.receivedDate, assignDate: c.assignDate, bomRecvDate: c.bomRecvDate, endDate: c.endDate, type: c.type,
+        dueRequest: '', receivedDate: c.receivedDate || c.newRecv || '', assignDate: c.assignDate, bomRecvDate: c.bomRecvDate, endDate: c.endDate || c.newEnd || '', type: c.type,
         ecnStep: c.type === 'ECO' ? 'assigned' : 'na', actionItems: blank,
         author: currentUserLabel(), authorId: currentUserId, comments: [], delayReason: null, delayOverrideAt: null
       });
