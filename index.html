@@ -7400,7 +7400,7 @@ function buildPlmImport_(rows){
     const assignDate = assign ? d(assign['수신일']) : (bomRecvDate ? dayBefore(bomRecvDate) : '');
     const receivedDate = assignDate || recvs[0] || '';
     // 작업 지도서 개정·Packing List 검토는 끝나지 않아도 완료로 본다 — STEP3(BOM 변경 및 제품 발주 통제)까지가 완료 기준(사용자 확인 2026-10-19)
-    const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])) && String(r['단계']||'').trim() !== '사후활동'); // 신규코드등록 사후활동은 완료 기준에서 뺌(사용자 2026-11-17)
+    const core = acts.filter(r=> !/작업 지도서 개정|Packing List 검토/.test(String(r['활동'])) && (onlyPost || String(r['단계']||'').trim() !== '사후활동')); // 신규코드등록 사후활동은 완료 기준에서 뺌(사용자 2026-11-17). 단 사후활동 줄만 있으면 그 사후활동으로 판단(NPO-2611-019 사건)
     const left = core.filter(r=> String(r['활동상태']).trim() !== '완료됨');
     const done = !left.length;
     const waiting = !done && left.every(r=> !d(r['수신일'])); // 남은 활동이 아직 우리 팀에 안 넘어옴 → '업무할당 완료'(사용자 2026-11-17)
