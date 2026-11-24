@@ -4382,6 +4382,16 @@ async function addMesHistoryEntry(entry){
   try{ await boardRequest('mesHistoryAdd', { entry: Object.assign({ userName: currentUserLabel() }, entry) }); }
   catch(e){ console.error('mesHistoryAdd failed', e); /* 이력 공유 저장 실패는 조용히 무시 — 조회 자체는 계속 동작해야 함 */ }
 }
+// 이 PC 저장(localStorage): 조회 이력 목록과 작지번호별 조회 결과(화면에 쓰는 칸만)
+const MES_HIST_LS = 'ppe_mes_hist', MES_RES_LS = 'ppe_mes_res';
+function mesLsGet_(k, d){ try{ return JSON.parse(localStorage.getItem(k)) || d; }catch(e){ return d; } }
+function mesLsSet_(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+function mesSaveResult_(q, group, byMes){
+  const all = mesLsGet_(MES_RES_LS, {}), F = ['PPOrderAX', 'PPOrder', 'MNumber', 'MName', 'Quantity', 'PPProgressName', 'RQDate'];
+  all[normMesOrderNo(q)] = {ts: Date.now(), byMes, rows: group.map(r=> Object.fromEntries(F.map(f=> [f, r[f]])))};
+  const keys = Object.keys(all).sort((x, y)=> all[y].ts - all[x].ts); keys.slice(60).forEach(k=> delete all[k]);
+  mesLsSet_(MES_RES_LS, all);
+}
 function mesRelativeTime(ts){
   const mins = Math.round((Date.now() - ts) / 60000);
   if(mins < 1) return '방금 전';
@@ -4453,22 +4463,6 @@ async function renderMesLookup(){
   const statusEl = document.getElementById('mesStatusLine');
   const resultEl = document.getElementById('mesResultArea');
   const historyEl = document.getElementById('mesHistoryArea');
-  const key = await fetchMesApiKey();
-  if(key === null){
-    statusEl.textContent = '공유 서버(구글)에 연결하지 못해 MES 키를 받지 못했습니다.';
-    statusEl.style.color = 'var(--danger, #b3423a)';
-    resultEl.innerHTML = `<div class="comment-empty">이 PC의 네트워크(VPN·프록시)가 구글 스크립트 주소를 막거나 매우 느릴 수 있습니다. 기본 설정 → PC 간 공유 설정 → 🩺 연결 진단으로 확인해 주세요. 연결되면 이 화면을 다시 열면 됩니다.</div>`;
-    document.getElementById('mesSearchBtn').disabled = true;
-    return;
-  }
-  if(!key){
-    statusEl.textContent = 'MES API 키가 서버에 설정되어 있지 않습니다.';
-    statusEl.style.color = 'var(--danger, #b3423a)';
-    resultEl.innerHTML = `<div class="comment-empty">Apps Script 편집기에서 <code>setMesApiKey("발급받은키")</code>를 한 번 실행해 주세요 (Code_merged.gs).</div>`;
-    document.getElementById('mesSearchBtn').disabled = true;
-    return;
-  }
-
   // 이력은 "찾은 건"만 남긴다(찾지 못한 조회는 남겨봐야 나중에 볼 가치가 없어서 목록만 지저분해짐).
   // 검색마다 서버에서 다시 통째로 받아오면(왕복 1번 더) 느려지므로, 최초 진입 시 한 번만 받아오고
   // 그 뒤로는 새 항목을 이 캐시 배열에 직접 추가해서 화면만 다시 그린다(네트워크 왕복 없음).
@@ -4489,18 +4483,47 @@ async function renderMesLookup(){
       row.addEventListener('click', ()=>{
         const h = mesHistoryCache[Number(row.dataset.idx)];
         if(!h) return;
-        skipNextHistoryLog = true;
         document.getElementById('mesOrderInput').value = h.query;
+        const saved = mesLsGet_(MES_RES_LS, {})[normMesOrderNo(h.query)];
+        if(saved && saved.rows && saved.rows.length){ // 이 PC에 저장된 결과 — MES를 다시 부르지 않음
+          renderResult(saved.rows, h.query, !!saved.byMes);
+          statusEl.style.color = '';
+          statusEl.innerHTML = '저장된 결과 · ' + escapeHtml(mesRelativeTime(saved.ts)) + ' 조회 <button type="button" class="btn btn-ghost" id="mesReloadBtn" style="padding:2px 8px; font-size:12px;">다시 조회</button>';
+          document.getElementById('mesReloadBtn').onclick = ()=>{ skipNextHistoryLog = true; document.getElementById('mesSearchBtn').click(); };
+          return;
+        }
+        skipNextHistoryLog = true;
         document.getElementById('mesSearchBtn').click();
       });
     });
   }
   // 그냥 "불러오는 중…" 문구만 있으면 멈춘 것처럼 보이니, 눈에 보이는 로딩바를 띄운다.
-  historyEl.innerHTML = `<div class="progress-bar"><div class="progress-bar-fill" id="mesHistoryProgressFill"></div></div><div class="comment-empty" style="margin-top:6px;">이력 불러오는 중…</div>`;
-  const mesHistoryProgress = startProgressBar(document.getElementById('mesHistoryProgressFill'));
+  // 이 PC에 저장해 둔 이력을 먼저 바로 그리고, 공유 서버 목록은 뒤에서 받아 바꿔 넣는다(저장된 게 없을 때만 로딩바)
+  mesHistoryCache = mesLsGet_(MES_HIST_LS, []);
+  let mesHistoryProgress = null;
+  if(mesHistoryCache.length) renderHistoryList();
+  else { historyEl.innerHTML = `<div class="progress-bar"><div class="progress-bar-fill" id="mesHistoryProgressFill"></div></div><div class="comment-empty" style="margin-top:6px;">이력 불러오는 중…</div>`; mesHistoryProgress = startProgressBar(document.getElementById('mesHistoryProgressFill')); }
   fetchMesHistory().then(list=>{
-    mesHistoryProgress.finish(()=>{ mesHistoryCache = list; renderHistoryList(); });
+    const done = ()=>{ if(list.length || !mesHistoryCache.length){ mesHistoryCache = list; mesLsSet_(MES_HIST_LS, list); } renderHistoryList(); }; // 서버를 못 읽으면(빈 목록) 저장된 이력을 그대로 둠
+    if(mesHistoryProgress) mesHistoryProgress.finish(done); else done();
   });
+
+  const key = await fetchMesApiKey();
+  if(key === null){
+    statusEl.textContent = '공유 서버(구글)에 연결하지 못해 MES 키를 받지 못했습니다.';
+    statusEl.style.color = 'var(--danger, #b3423a)';
+    resultEl.innerHTML = `<div class="comment-empty">이 PC의 네트워크(VPN·프록시)가 구글 스크립트 주소를 막거나 매우 느릴 수 있습니다. 기본 설정 → PC 간 공유 설정 → 🩺 연결 진단으로 확인해 주세요. 연결되면 이 화면을 다시 열면 됩니다.</div>`;
+    document.getElementById('mesSearchBtn').disabled = true;
+    return;
+  }
+  if(!key){
+    statusEl.textContent = 'MES API 키가 서버에 설정되어 있지 않습니다.';
+    statusEl.style.color = 'var(--danger, #b3423a)';
+    resultEl.innerHTML = `<div class="comment-empty">Apps Script 편집기에서 <code>setMesApiKey("발급받은키")</code>를 한 번 실행해 주세요 (Code_merged.gs).</div>`;
+    document.getElementById('mesSearchBtn').disabled = true;
+    return;
+  }
+
 
   el.querySelectorAll('.mesRangeBtn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
@@ -4598,6 +4621,7 @@ async function renderMesLookup(){
       }
       statusEl.textContent = `${elapsedSec}초 · 기간 내 전체 ${list.length}건 중 관련 ${group.length}건`;
       const resultSummary = renderResult(group, searchedAs, !!byMes);
+      if(group.length && skipNextHistoryLog) mesSaveResult_(searchedAs, group, !!byMes);
       if(!group.length){
         resultEl.innerHTML = `<div class="comment-empty">"${escapeHtml(searchedAs)}"에 해당하는 작지를 이 기간 안에서 찾지 못했습니다. 기간을 넓혀서 다시 시도해 보세요.</div>`;
       } else if(!skipNextHistoryLog){
@@ -4609,6 +4633,8 @@ async function renderMesLookup(){
         if(mesHistoryCache.length > 30) mesHistoryCache.length = 30;
         renderHistoryList();
         addMesHistoryEntry(entry);
+        mesLsSet_(MES_HIST_LS, mesHistoryCache);
+        mesSaveResult_(searchedAs, group, !!byMes);
       }
     }catch(err){
       statusEl.style.color = 'var(--danger, #b3423a)';
