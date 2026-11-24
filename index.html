@@ -1053,6 +1053,9 @@ body{font-family:var(--font-body); letter-spacing:-.005em;}
 
 /* 사이드바: 바탕과 한 몸, 메뉴는 알약 모양 */
 .sidebar{background:var(--paper); border-right:0; padding:22px 14px;}
+/* 메뉴가 많아져도 아래쪽(현재 작업자·알림·다크 모드)이 잘리지 않게: 메뉴 목록만 스크롤 (2026-11-24) */
+#navList{min-height:0; overflow-y:auto; flex:0 1 auto; scrollbar-width:thin;}
+.sidebar-foot, .nav-edit-btn{flex-shrink:0;}
 .brand{background:var(--bento-ink); border-radius:18px; padding:13px 14px;}
 .brand:hover{background:var(--bento-ink); filter:brightness(1.15);}
 .brand-word{color:var(--paper);}
