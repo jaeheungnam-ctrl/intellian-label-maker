@@ -3204,9 +3204,11 @@ function checklistFor(type, task){
   const items = CHECKLISTS[type] || CHECKLISTS['기타업무'] || [];
   return task && task.sourceChecklist ? [...items, ...task.sourceChecklist.filter(s=>!items.some(i=>i.key===s.key))] : items;
 }
+const modelsOf = m=> String(m || '').split(/s*,s*/).map(x=> x.trim()).filter(Boolean);
+const normModel = v=> [...new Set(modelsOf(v))].join(', ') || '미분류';
 async function ensureModelKnown(model){
-  if(!model) return;
-  if(!MODELS.includes(model)){ MODELS.push(model); MODELS.sort(); await persistModels(); }
+  const add = modelsOf(model).filter(m=> !MODELS.includes(m)); if(!add.length) return;
+  MODELS.push(...add); MODELS.sort(); await persistModels();
 }
 function formatMaterialList(arr){
   const rows = (arr||[]).map(x=>(x||'').trim()).filter(Boolean);
@@ -5760,17 +5762,22 @@ function setupModelCombobox(inputEl){
   wrapper.appendChild(list);
 
   function renderList(filterText){
-    const opts = MODELS.filter(m => !filterText || m.toLowerCase().includes(filterText.toLowerCase()));
+    const cur = modelsOf(inputEl.value), last = /,s*$/.test(filterText || '') ? '' : (filterText ? (modelsOf(filterText).pop() || '') : '');
+    const ft = MODELS.includes(last) ? '' : last;
+    const opts = MODELS.filter(m => !ft || m.toLowerCase().includes(ft.toLowerCase()));
     if(!opts.length){ list.style.display = 'none'; return; }
-    list.innerHTML = opts.map(m=>`<div class="combo-opt" data-val="${escapeHtml(m)}">${escapeHtml(m)}</div>`).join('');
+    list.innerHTML = opts.map(m=>`<div class="combo-opt" data-val="${escapeHtml(m)}">${cur.includes(m) ? '✓ ' : ''}${escapeHtml(m)}</div>`).join('');
     list.style.display = 'block';
     list.querySelectorAll('.combo-opt').forEach(opt=>{
       opt.addEventListener('mousedown', (e)=>{
         e.preventDefault();
-        inputEl.value = opt.dataset.val;
+        // 여러 개 고르기: 있으면 빼고 없으면 넣음('미분류'는 다른 모델을 넣으면 빠짐). 목록은 열어 둠
+        const v = opt.dataset.val; let l = modelsOf(inputEl.value).filter(x=> MODELS.includes(x) || x === '미분류');
+        l = l.includes(v) ? l.filter(x=> x !== v) : [...l.filter(x=> x !== '미분류'), v];
+        inputEl.value = l.join(', ');
         inputEl.dispatchEvent(new Event('input', {bubbles:true}));
         inputEl.dispatchEvent(new Event('change', {bubbles:true}));
-        list.style.display = 'none'; // 우리 자신의 input 리스너가 재오픈시킨 뒤 최종적으로 닫음
+        renderList('');
       });
     });
   }
@@ -5782,7 +5789,7 @@ function setupModelCombobox(inputEl){
 function filteredTasks(){
   const q = filter.q.trim().toLowerCase();
   return TASKS.filter(t=>{
-    if(filter.model!=='all' && t.model!==filter.model) return false;
+    if(filter.model!=='all' && !modelsOf(t.model).includes(filter.model)) return false;
     if(filter.type!=='all' && t.type!==filter.type) return false;
     if(filter.assignee!=='all' && (t.assignee||'미배정')!==filter.assignee) return false;
     if(filter.status!=='all' && t.status!==filter.status) return false;
@@ -5796,7 +5803,7 @@ function filteredTasks(){
   });
 }
 function renderToolbar(container){
-  const models = uniqueValues('model');
+  const models = [...new Set(TASKS.flatMap(t=> modelsOf(t.model)))].sort();
   const assignees = Array.from(new Set(TASKS.map(t=>t.assignee||'미배정'))).sort();
   const active = isFilterActive();
   container.innerHTML = `
@@ -6479,7 +6486,7 @@ function parsePrinterTable_(text){
 
 function renderModelSettings(){
   const body = document.getElementById('settingsBody');
-  const usageCount = m => TASKS.filter(t=>t.model===m).length;
+  const usageCount = m => TASKS.filter(t=> modelsOf(t.model).includes(m)).length;
   body.innerHTML = `
     <div class="panel" style="max-width:560px;">
       <h3>MODEL 목록</h3>
@@ -6919,7 +6926,7 @@ function openDetail(id){
         </div>
         <div class="field">
           <label>MODEL</label>
-          <input type="text" id="fModel" value="${escapeHtml(t.model)}" placeholder="예: GMDSS, VSAT C1 …">
+          <input type="text" id="fModel" value="${escapeHtml(t.model)}" placeholder="여러 개면 쉼표로 (예: GGS, SPARE)">
         </div>
         <div class="field">
           <label>상태</label>
@@ -7070,7 +7077,7 @@ function openDetail(id){
   }
   setupModelCombobox(modal.querySelector('#fModel'));
   modal.querySelector('#fType').addEventListener('change', async e=>{ await commit(task=>{ task.type = e.target.value; }); openDetail(id); }); // 유형을 바꾸면 액션 아이템도 그 유형 것으로 바로 다시 그림
-  modal.querySelector('#fModel').addEventListener('change', e=> commit(task=>{ task.model = e.target.value.trim() || '미분류'; ensureModelKnown(task.model); }));
+  modal.querySelector('#fModel').addEventListener('change', e=> commit(task=>{ task.model = normModel(e.target.value); ensureModelKnown(task.model); }));
   modal.querySelector('#fStatus').addEventListener('change', async e=>{
     let doneWho = null;
     if(e.target.value==='완료'){ doneWho = await pickDoneAssignee_(t); if(!doneWho){ e.target.value = t.status; return; } }
@@ -7630,7 +7637,7 @@ function openExcelReview(toCreate, toUpdate){
   });
   document.getElementById('excelConfirmBtn').addEventListener('click', async ()=>{
     modal.querySelectorAll('.excel-model-input').forEach(inp=>{
-      toCreate[Number(inp.dataset.idx)].model = inp.value.trim();
+      toCreate[Number(inp.dataset.idx)].model = modelsOf(inp.value).join(', ');
     });
 
     const createdTasks = [];
@@ -8344,7 +8351,7 @@ async function createTaskFromForm(){
   const title = document.getElementById('nTitle').value.trim();
   const type = document.getElementById('nType').value;
   const status = document.getElementById('nStatus').value;
-  const model = document.getElementById('nModel').value.trim() || '미분류';
+  const model = normModel(document.getElementById('nModel').value);
   const blankActionItems = {};
   checklistFor(type).forEach(i=>{ blankActionItems[i.key] = false; });
   const newTask = {
