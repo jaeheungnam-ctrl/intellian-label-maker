@@ -5334,7 +5334,7 @@ function ecsPrint_(){
 }
 
 /* ================= DASHBOARD ================= */
-let dashboardModel='all',dashboardWeekOffset=0,dashboardAssignee='all',dashboardGanttMonthOffset=0,dashboardTileOpen=null,dashboardStatusChartOpen=false;
+let dashboardModels=[],dashboardWeekOffset=0,dashboardAssignee='all',dashboardGanttMonthOffset=0,dashboardTileOpen=null,dashboardStatusChartOpen=false;
 function dashDate(value){
   const m=String(value||'').match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[ T])/);
   if(!m)return null;
@@ -5356,8 +5356,8 @@ function renderDashboard(){
   const gDays=Array.from({length:gMonthEnd.getDate()},(_,i)=>new Date(gMonthStart.getFullYear(),gMonthStart.getMonth(),i+1));
   const tasksO=TASKS.filter(t=>dashboardAssignee==='all'||(t.assignee||'미배정')===dashboardAssignee);
   const dashModels=[...new Set(TASKS.flatMap(t=>modelsOf(t.model)))].sort((a,b)=>a==='미분류'?1:b==='미분류'?-1:a.localeCompare(b));
-  if(dashboardModel!=='all'&&!dashModels.includes(dashboardModel))dashboardModel='all';
-  const tasks=dashboardModel==='all'?tasksO:tasksO.filter(t=>modelsOf(t.model).includes(dashboardModel));
+  dashboardModels=dashboardModels.filter(m=>dashModels.includes(m));
+  const tasks=dashboardModels.length?tasksO.filter(t=>modelsOf(t.model).some(m=>dashboardModels.includes(m))):tasksO;
   // 모델별(담당자 고르기는 따름, MODEL 고르기와는 상관없이 전체 모델) — 여러 모델이 붙은 건은 모델마다 셈
   const byModel=dashModels.map(m=>{const L=tasksO.filter(t=>modelsOf(t.model).includes(m));return {m,n:L.length,open:L.filter(t=>t.status!=='완료').length};}).filter(r=>r.n).sort((a,b)=>b.open-a.open||b.n-a.n);
   const maxBm=Math.max(1,...byModel.map(r=>r.n));
@@ -5624,9 +5624,9 @@ function renderDashboard(){
 
     <div class="dash-panel">
       <h2>🏷️ 모델별 업무</h2>
-      <p class="dash-note">큰 숫자 = 미완료 · 막대 = 완료율 · 누르면 그 모델만 보기${dashboardModel!=='all'?' (다시 누르면 전체)':''} · 여러 모델이 붙은 건은 모델마다 셈</p>
+      <p class="dash-note">큰 숫자 = 미완료 · 막대 = 완료율 · 누를 때마다 넣고 빼기(여러 개 고르면 그중 하나라도 붙은 업무)${dashboardModels.length?` · <b>${dashboardModels.map(escapeHtml).join(', ')}</b> 보는 중 <button type="button" id="dashModelClear" style="border:0;background:none;color:var(--primary);cursor:pointer;font:inherit;text-decoration:underline;padding:0">전체 보기</button>`:''} · 여러 모델이 붙은 건은 모델마다 셈</p>
       <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px;">
-        ${byModel.length? byModel.map(r=>{const pct=r.n?Math.round((r.n-r.open)/r.n*100):0;return `<button type="button" data-dash-model="${escapeHtml(r.m)}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}" style="text-align:left; padding:12px 14px; border-radius:12px; border:1px solid ${r.m===dashboardModel?'var(--primary)':'var(--border-soft)'}; background:${r.m===dashboardModel?'var(--border-soft)':'var(--surface)'}; cursor:pointer; font:inherit; color:inherit;">
+        ${byModel.length? byModel.map(r=>{const pct=r.n?Math.round((r.n-r.open)/r.n*100):0;return `<button type="button" data-dash-model="${escapeHtml(r.m)}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}" style="text-align:left; padding:12px 14px; border-radius:12px; border:1px solid ${dashboardModels.includes(r.m)?'var(--primary)':'var(--border-soft)'}; background:${dashboardModels.includes(r.m)?'var(--border-soft)':'var(--surface)'}; cursor:pointer; font:inherit; color:inherit;">
           <div style="font-size:12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(r.m)}</div>
           <div style="display:flex; align-items:baseline; gap:6px; margin:4px 0 6px;"><b style="font-size:24px; line-height:1;${r.open?'':' color:var(--muted-2);'}">${r.open}</b><span style="font-size:11.5px; color:var(--muted); white-space:nowrap;">미완료 · 전체 ${r.n}</span></div>
           <div style="height:5px; border-radius:3px; background:var(--border-soft); overflow:hidden;"><div style="height:100%; width:${pct}%; background:var(--primary);"></div></div>
@@ -5638,7 +5638,7 @@ function renderDashboard(){
     <div class="dash-controls">
       <button class="btn btn-ghost" id="dashPrev" aria-label="이전 주">← 이전 주</button><button class="btn btn-ghost" id="dashToday">이번 주</button><button class="btn btn-ghost" id="dashNext" aria-label="다음 주">다음 주 →</button>
       <h2>${dashKey(monday)} — ${dashKey(sunday)}</h2>
-      <select class="filt" id="dashModel" aria-label="대시보드 MODEL"><option value="all">전체 MODEL</option>${dashModels.map(m=>`<option value="${escapeHtml(m)}" ${m===dashboardModel?'selected':''}>${escapeHtml(m)}</option>`).join('')}</select>
+      <select class="filt" id="dashModel" aria-label="대시보드 MODEL"><option value="all" ${dashboardModels.length?'':'selected'}>전체 MODEL</option>${dashboardModels.length>1?`<option value="" selected disabled>${dashboardModels.length}개 모델</option>`:''}${dashModels.map(m=>`<option value="${escapeHtml(m)}" ${dashboardModels.length===1&&m===dashboardModels[0]?'selected':''}>${escapeHtml(m)}</option>`).join('')}</select>
       <select class="filt" id="dashOwner" aria-label="대시보드 담당자"><option value="all">전체 담당자</option>${owners.map(o=>`<option value="${escapeHtml(o)}" ${o===dashboardAssignee?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>
     </div>
     <div class="dash-panel"><h2>주간 업무현황 캘린더</h2><p class="dash-note">수신일·완료요청일·종료일 기준입니다. 업무를 클릭하면 상세 정보를 확인할 수 있습니다.</p>
@@ -5695,8 +5695,9 @@ function renderDashboard(){
   el.querySelector('#dashNext').onclick=()=>{dashboardWeekOffset++;renderDashboard();};
   el.querySelector('#dashToday').onclick=()=>{dashboardWeekOffset=0;renderDashboard();};
   el.querySelector('#dashOwner').onchange=e=>{dashboardAssignee=e.target.value;renderDashboard();};
-  el.querySelector('#dashModel').onchange=e=>{dashboardModel=e.target.value;renderDashboard();};
-  el.querySelectorAll('[data-dash-model]').forEach(b=>b.addEventListener('click',()=>{dashboardModel=dashboardModel===b.dataset.dashModel?'all':b.dataset.dashModel;renderDashboard();}));
+  el.querySelector('#dashModel').onchange=e=>{dashboardModels=e.target.value==='all'?[]:[e.target.value];renderDashboard();};
+  el.querySelectorAll('[data-dash-model]').forEach(b=>b.addEventListener('click',()=>{const m=b.dataset.dashModel;dashboardModels=dashboardModels.includes(m)?dashboardModels.filter(x=>x!==m):[...dashboardModels,m];renderDashboard();}));
+  const dmc=el.querySelector('#dashModelClear');if(dmc)dmc.onclick=()=>{dashboardModels=[];renderDashboard();};
   el.querySelector('#dashGanttPrev').onclick=()=>{dashboardGanttMonthOffset--;renderDashboard();};
   el.querySelector('#dashGanttNext').onclick=()=>{dashboardGanttMonthOffset++;renderDashboard();};
   el.querySelector('#dashGanttToday').onclick=()=>{dashboardGanttMonthOffset=0;renderDashboard();};
