@@ -5247,7 +5247,7 @@ function renderEcoStats(){
       + (D.top.length ? '<div class="ecs-rank">' + D.top.map((x, i)=> '<div class="ecs-rk" data-id="' + esc(x.t.id) + '" title="' + esc(fmtD(x.recv) + ' → ' + fmtD(x.end)) + '"><span class="no">' + (i + 1) + '</span><div class="nm"><div>' + esc(x.t.title || '') + '</div><small>' + esc(x.t.docNumber || '') + '</small><div class="tr"><i class="ecs-rb" style="width:' + (x.days / topMax * 100).toFixed(1) + '%"></i></div></div><span class="dv">' + x.days + '일</span></div>').join('') + '</div>' : '<div class="ecs-empty">완료한 건이 없습니다.</div>')
     + '</div>'
     + (()=>{ const R = D.byModel, mx = Math.max(1, ...R.map(r=> r.n)); return '<div class="ecs-card"><div class="ecs-hd"><div><h3>모델별</h3><p>누르면 그 모델만 보기' + (ecsModel_ !== 'all' ? ' · 다시 누르면 전체' : '') + ' · 여러 모델이 붙은 건은 모델마다 셈</p></div></div>'
-      + (R.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl ecs-mtbl"><thead><tr><th>MODEL</th><th>대상</th><th class="num">완료</th><th class="num">남은 건</th><th class="num">완료율</th><th class="num">평균 소요일</th><th class="num">60일 넘은 남은 건</th></tr></thead><tbody>'
+      + (R.length ? '<div class="ecs-tbl-wrap" style="max-height:none;overflow:visible"><table class="ecs-tbl ecs-mtbl"><thead><tr><th>MODEL</th><th>대상</th><th class="num">완료</th><th class="num">남은 건</th><th class="num">완료율</th><th class="num">평균 소요일</th><th class="num">60일 넘은 남은 건</th></tr></thead><tbody>'
         + R.map(r=> '<tr data-model="' + esc(r.m) + '"' + (r.m === ecsModel_ ? ' style="background:var(--border-soft)"' : '') + '><td><b>' + esc(r.m) + '</b></td><td style="min-width:140px"><span style="display:inline-flex;vertical-align:middle;height:8px;width:' + Math.max(2, Math.round(r.n / mx * 100)) + 'px;border-radius:4px;overflow:hidden;background:var(--ecs-a3)"><i style="flex:' + r.done + ';background:var(--ecs-s2)"></i><i style="flex:' + r.open + '"></i></span> ' + r.n + '</td><td class="num">' + r.done + '</td><td class="num">' + r.open + '</td><td class="num">' + Math.round(r.done / r.n * 100) + '%</td><td class="num">' + (r.avg == null ? '—' : f1(r.avg) + '일') + '</td><td class="num">' + (r.over60 ? '<span class="crit">' + r.over60 + '</span>' : '0') + '</td></tr>').join('')
         + '</tbody></table></div>' : '<div class="ecs-empty">해당 건이 없습니다.</div>') + '</div>'; })()
     + '<div class="ecs-card c7"><div class="ecs-hd"><div><h3>남은 건 ' + D.openList.length + '건</h3><p>오래된 순 · 누르면 상세</p></div></div>' + (D.openList.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl">' + theadOpen + '<tbody>' + openSorted.map(rowOpen).join('') + '</tbody></table></div>' : '<div class="ecs-empty">남은 건이 없습니다.</div>') + '</div>'
@@ -5588,17 +5588,6 @@ function renderDashboard(){
         </div>
       </div>
       <div class="dash-panel">
-        <h2>🏷️ 모델별 업무 (미완료 / 전체)</h2>
-        <p class="dash-note">누르면 그 모델만 보기${dashboardModel!=='all'?' · 다시 누르면 전체':''} · 여러 모델이 붙은 건은 모델마다 셈</p>
-        <div class="dq-workload">
-          ${byModel.length? byModel.map(r=>`<button type="button" class="dq-wl-row" data-dash-model="${escapeHtml(r.m)}" style="${r.m===dashboardModel?'background:var(--border-soft);':''}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}">
-              <span class="dq-wl-name">${escapeHtml(r.m)}</span>
-              <div class="dq-wl-bar-track"><div class="dq-wl-bar-fill" style="width:${Math.round(r.n/maxBm*100)}%; background:var(--border); display:flex"><i style="width:${r.n?Math.round(r.open/r.n*100):0}%; background:var(--primary)"></i></div></div>
-              <span class="dq-wl-count">${r.open} / ${r.n}</span>
-            </button>`).join('') : '<div class="dash-note">업무가 없습니다.</div>'}
-        </div>
-      </div>
-      <div class="dash-panel">
         <h2>📊 상태 분포</h2>
         <div class="dq-stack">
           ${statusCounts.filter(s=>s.count>0).map(s=>{
@@ -5610,6 +5599,19 @@ function renderDashboard(){
         <div class="dq-stack-legend">
           ${statusCounts.map(s=>{const sc=statusColor(s.status); return `<span><i style="background:${sc.c}"></i>${s.status} <b>${s.count}</b></span>`;}).join('')}
         </div>
+      </div>
+    </div>
+
+    <div class="dash-panel">
+      <h2>🏷️ 모델별 업무</h2>
+      <p class="dash-note">큰 숫자 = 미완료 · 막대 = 완료율 · 누르면 그 모델만 보기${dashboardModel!=='all'?' (다시 누르면 전체)':''} · 여러 모델이 붙은 건은 모델마다 셈</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px;">
+        ${byModel.length? byModel.map(r=>{const pct=r.n?Math.round((r.n-r.open)/r.n*100):0;return `<button type="button" data-dash-model="${escapeHtml(r.m)}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}" style="text-align:left; padding:12px 14px; border-radius:12px; border:1px solid ${r.m===dashboardModel?'var(--primary)':'var(--border-soft)'}; background:${r.m===dashboardModel?'var(--border-soft)':'var(--surface)'}; cursor:pointer; font:inherit; color:inherit;">
+          <div style="font-size:12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(r.m)}</div>
+          <div style="display:flex; align-items:baseline; gap:6px; margin:4px 0 6px;"><b style="font-size:24px; line-height:1;${r.open?'':' color:var(--muted-2);'}">${r.open}</b><span style="font-size:11.5px; color:var(--muted); white-space:nowrap;">미완료 · 전체 ${r.n}</span></div>
+          <div style="height:5px; border-radius:3px; background:var(--border-soft); overflow:hidden;"><div style="height:100%; width:${pct}%; background:var(--primary);"></div></div>
+          <div style="font-size:11px; color:var(--muted); margin-top:4px;">완료율 ${pct}%</div>
+        </button>`;}).join('') : '<div class="dash-note">업무가 없습니다.</div>'}
       </div>
     </div>
 
