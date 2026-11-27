@@ -5058,7 +5058,7 @@ function renderCurrent(){
 // 보드 업무 중 유형 ECO(=ECN, E00…)·MDM(=신규코드등록, NPO…)을 탭으로 나눠, 수신일(=도달일)→완료일 달력 일수를 본다(사용자 확인 2026-10-19).
 // 기준 "도달일": 기간 안에 도달한 건 → 그중 완료·남은 건·소요일. 기준 "완료일": 기간 안에 완료한 건의 소요일 + 기간 끝 시점까지 도달했는데 아직 안 끝난 건.
 // 차트는 카드의 실제 픽셀 크기로 그린다(viewBox로 늘리면 글씨·막대가 같이 커짐). 창 크기가 바뀌면 애니메이션 없이 다시 그림.
-var ecsStart_ = 'assign', ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
+var ecsModel_ = 'all', ecsStart_ = 'assign', ecsTab_ = 'ECO', ecsBasis_ = 'recv', ecsFrom_ = '', ecsTo_ = '', ecsAnimate_ = true, ecsLastView_ = null, ecsMotion_ = null, ecsRO_ = null, ecsD_ = null;
 const ECS_TABS_ = {ECO:'ECN', MDM:'신규코드등록'};
 (()=>{ const p = (FB.viewEs || '').split('.'), ymd = /^\d{4}-\d{2}-\d{2}$/; if(p.length < 4) return; if(p[4] === 'bom' || p[4] === 'assign') ecsStart_ = p[4];
   if(ECS_TABS_[p[0]]) ecsTab_ = p[0]; if(p[1] === 'recv' || p[1] === 'end') ecsBasis_ = p[1]; if(ymd.test(p[2])) ecsFrom_ = p[2]; if(ymd.test(p[3])) ecsTo_ = p[3]; })();
@@ -5071,14 +5071,18 @@ function ecsYmd_(d){ return d ? d.getFullYear() + '-' + String(d.getMonth()+1).p
 function ecsData_(){
   const t0 = new Date(); if(!ecsFrom_) ecsFrom_ = t0.getFullYear() + '-01-01'; if(!ecsTo_) ecsTo_ = ecsYmd_(t0);
   const from = parseDueDate(ecsFrom_), to = parseDueDate(ecsTo_), today = new Date(); today.setHours(0,0,0,0);
-  const all = TASKS.filter(t=> t.type === ecsTab_).map(t=>{
+  const allM = TASKS.filter(t=> t.type === ecsTab_).map(t=>{
     const recv = parseDueDate(ecsStartOf_(t)), end = parseDueDate(t.endDate), done = t.status === '완료';
     return {t, recv, end, done, days: (done && recv && end && end >= recv) ? Math.round((end - recv) / 864e5) : null, age: (!done && recv) ? Math.round((today - recv) / 864e5) : null};
   });
   const inR = d=> !!d && (!from || d >= from) && (!to || d <= to);
-  let doneList, openList;
-  if(ecsBasis_ === 'recv'){ const sc = all.filter(x=> inR(x.recv)); doneList = sc.filter(x=> x.done); openList = sc.filter(x=> !x.done); }
-  else { doneList = all.filter(x=> x.done && inR(x.end)); openList = all.filter(x=> !x.done && x.recv && (!to || x.recv <= to)); }
+  const scope = L=> ecsBasis_ === 'recv' ? {d: L.filter(x=> inR(x.recv) && x.done), o: L.filter(x=> inR(x.recv) && !x.done)} : {d: L.filter(x=> x.done && inR(x.end)), o: L.filter(x=> !x.done && x.recv && (!to || x.recv <= to))};
+  // 모델별 비교(고른 모델과 상관없이 전체 모델) — 여러 모델이 붙은 건은 모델마다 셈
+  const mNames = [...new Set(allM.flatMap(x=> modelsOf(x.t.model)))].sort((a, b)=> a === '미분류' ? 1 : b === '미분류' ? -1 : a.localeCompare(b));
+  const byModel = mNames.map(m=>{ const S = scope(allM.filter(x=> modelsOf(x.t.model).includes(m))), dd = S.d.map(x=> x.days).filter(v=> v != null); return {m, done: S.d.length, open: S.o.length, n: S.d.length + S.o.length, avg: dd.length ? dd.reduce((a, b)=> a + b, 0) / dd.length : null, over60: S.o.filter(x=> (x.age || 0) > 60).length}; }).filter(r=> r.n).sort((a, b)=> b.n - a.n);
+  if(ecsModel_ !== 'all' && !mNames.includes(ecsModel_)) ecsModel_ = 'all';
+  const all = ecsModel_ === 'all' ? allM : allM.filter(x=> modelsOf(x.t.model).includes(ecsModel_));
+  const S0 = scope(all), doneList = S0.d, openList = S0.o;
   const ds = doneList.map(x=> x.days).filter(v=> v != null).sort((a,b)=> a-b);
   const st = {n:ds.length, avg: ds.length ? ds.reduce((a,b)=> a+b, 0) / ds.length : 0, med: ds.length ? (ds.length % 2 ? ds[(ds.length-1)/2] : (ds[ds.length/2-1] + ds[ds.length/2]) / 2) : 0,
     max: ds.length ? ds[ds.length-1] : 0, in30: ds.filter(v=> v <= 30).length};
@@ -5092,7 +5096,7 @@ function ecsData_(){
       backlog: all.filter(x=> x.recv && x.recv <= me && !(x.done && x.end && x.end <= me)).length});
   }
   const bucket = (vals, defs)=> defs.map(([label, lo, hi])=> ({label, n: vals.filter(v=> v >= lo && v <= hi).length}));
-  return {all, doneList, openList, st, months,
+  return {all, doneList, openList, st, months, byModel, mNames,
     hist: bucket(ds, ECS_HIST_), aging: bucket(openList.map(x=> x.age).filter(v=> v != null), ECS_AGE_),
     top: doneList.filter(x=> x.days != null).sort((a,b)=> b.days - a.days).slice(0, 10),
     noRecv: all.filter(x=> !x.recv).length, noEnd: doneList.filter(x=> x.days == null).length};
@@ -5214,11 +5218,12 @@ function renderEcoStats(){
     + '<div class="ecs-seg" data-k="tab">' + Object.entries(ECS_TABS_).map(([k, v])=> '<button type="button" data-v="' + k + '" class="' + (ecsTab_ === k ? 'on' : '') + '">' + v + '</button>').join('') + '</div>'
     + (ecsTab_ === 'ECO' ? '<div class="ecs-seg" data-k="start" title="소요일을 어디서부터 셀지"><button type="button" data-v="assign" class="' + (ecsStart_ === 'assign' ? 'on' : '') + '">업무 할당부터</button><button type="button" data-v="bom" class="' + (ecsStart_ === 'bom' ? 'on' : '') + '">BOM 변경 수신부터</button></div>' : '')
     + '<div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="' + (ecsBasis_ === 'recv' ? 'on' : '') + '">' + (ecsTab_ === 'ECO' ? '시작일' : '도달일') + ' 기준</button><button type="button" data-v="end" class="' + (ecsBasis_ === 'end' ? 'on' : '') + '">완료일 기준</button></div>'
+    + '<select class="filt" id="ecsModel" aria-label="MODEL"><option value="all">전체 MODEL</option>' + D.mNames.map(m=> '<option value="' + esc(m) + '"' + (m === ecsModel_ ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select>'
     + '<span class="ecs-date"><input type="date" id="ecsFrom" value="' + ecsFrom_ + '" aria-label="시작일"> – <input type="date" id="ecsTo" value="' + ecsTo_ + '" aria-label="종료일"></span>'
     + '<span class="ecs-chips"><button type="button" data-q="year">올해</button><button type="button" data-q="q">이번 분기</button><button type="button" data-q="3m">최근 3개월</button><button type="button" data-q="m">이번 달</button></span>'
     + '<span class="ecs-out"><button type="button" id="ecsXlsx">' + ico.x + '엑셀</button><button type="button" id="ecsPdf">' + ico.p + 'PDF</button></span>'
   + '</div>'
-  + '<div class="ecs-scope">' + esc(ECS_TABS_[ecsTab_]) + ' · ' + esc(ecsFrom_) + ' ~ ' + esc(ecsTo_) + ' · ' + (ecsBasis_ === 'recv' ? '기간 안에 ' + ecsStartLabel_() + '된 건' : '기간 안에 완료한 건 (남은 건 = 기간 끝까지 ' + ecsStartLabel_() + '됐는데 안 끝난 건)') + ' · 소요일 = ' + ecsStartLabel_() + '일→완료일 달력 일수' + (notes ? ' · ' + esc(notes) : '') + '</div>'
+  + '<div class="ecs-scope">' + esc(ECS_TABS_[ecsTab_]) + (ecsModel_ !== 'all' ? ' · MODEL <b>' + esc(ecsModel_) + '</b>' : '') + ' · ' + esc(ecsFrom_) + ' ~ ' + esc(ecsTo_) + ' · ' + (ecsBasis_ === 'recv' ? '기간 안에 ' + ecsStartLabel_() + '된 건' : '기간 안에 완료한 건 (남은 건 = 기간 끝까지 ' + ecsStartLabel_() + '됐는데 안 끝난 건)') + ' · 소요일 = ' + ecsStartLabel_() + '일→완료일 달력 일수' + (notes ? ' · ' + esc(notes) : '') + '</div>'
   + '<div class="ecs-bento">'
     + '<div class="ecs-card c5 ecs-hero"><div><div class="ecs-eyebrow">' + ecsStartLabel_() + ' → 생산기술 완료까지 평균</div><div class="ecs-hero-num"><strong class="ecs-num" data-dec="1">' + f1(st.avg) + '</strong><span>일</span></div>'
       + '<div class="ecs-hero-sub">중간값 <b>' + f1(st.med) + '일</b> · 가장 오래 <b>' + st.max + '일</b> · 완료 <b>' + st.n + '건</b> 기준</div></div><div class="ecs-spark" data-chart="spark"></div></div>'
@@ -5241,6 +5246,10 @@ function renderEcoStats(){
     + '<div class="ecs-card c5"><div class="ecs-hd"><div><h3>오래 걸린 TOP 10</h3><p>누르면 상세</p></div></div>'
       + (D.top.length ? '<div class="ecs-rank">' + D.top.map((x, i)=> '<div class="ecs-rk" data-id="' + esc(x.t.id) + '" title="' + esc(fmtD(x.recv) + ' → ' + fmtD(x.end)) + '"><span class="no">' + (i + 1) + '</span><div class="nm"><div>' + esc(x.t.title || '') + '</div><small>' + esc(x.t.docNumber || '') + '</small><div class="tr"><i class="ecs-rb" style="width:' + (x.days / topMax * 100).toFixed(1) + '%"></i></div></div><span class="dv">' + x.days + '일</span></div>').join('') + '</div>' : '<div class="ecs-empty">완료한 건이 없습니다.</div>')
     + '</div>'
+    + (()=>{ const R = D.byModel, mx = Math.max(1, ...R.map(r=> r.n)); return '<div class="ecs-card"><div class="ecs-hd"><div><h3>모델별</h3><p>누르면 그 모델만 보기' + (ecsModel_ !== 'all' ? ' · 다시 누르면 전체' : '') + ' · 여러 모델이 붙은 건은 모델마다 셈</p></div></div>'
+      + (R.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl ecs-mtbl"><thead><tr><th>MODEL</th><th>대상</th><th class="num">완료</th><th class="num">남은 건</th><th class="num">완료율</th><th class="num">평균 소요일</th><th class="num">60일 넘은 남은 건</th></tr></thead><tbody>'
+        + R.map(r=> '<tr data-model="' + esc(r.m) + '"' + (r.m === ecsModel_ ? ' style="background:var(--border-soft)"' : '') + '><td><b>' + esc(r.m) + '</b></td><td style="min-width:140px"><span style="display:inline-flex;vertical-align:middle;height:8px;width:' + Math.max(2, Math.round(r.n / mx * 100)) + 'px;border-radius:4px;overflow:hidden;background:var(--ecs-a3)"><i style="flex:' + r.done + ';background:var(--ecs-s2)"></i><i style="flex:' + r.open + '"></i></span> ' + r.n + '</td><td class="num">' + r.done + '</td><td class="num">' + r.open + '</td><td class="num">' + Math.round(r.done / r.n * 100) + '%</td><td class="num">' + (r.avg == null ? '—' : f1(r.avg) + '일') + '</td><td class="num">' + (r.over60 ? '<span class="crit">' + r.over60 + '</span>' : '0') + '</td></tr>').join('')
+        + '</tbody></table></div>' : '<div class="ecs-empty">해당 건이 없습니다.</div>') + '</div>'; })()
     + '<div class="ecs-card c7"><div class="ecs-hd"><div><h3>남은 건 ' + D.openList.length + '건</h3><p>오래된 순 · 누르면 상세</p></div></div>' + (D.openList.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl">' + theadOpen + '<tbody>' + openSorted.map(rowOpen).join('') + '</tbody></table></div>' : '<div class="ecs-empty">남은 건이 없습니다.</div>') + '</div>'
     + '<details class="ecs-card"><summary><div class="ecs-hd"><div><h3>전체 목록 ' + allSorted.length + '건</h3><p>도달일 최근 순 · 눌러서 펼치기</p></div><span class="chev">▾</span></div></summary>' + (allSorted.length ? '<div class="ecs-tbl-wrap"><table class="ecs-tbl">' + thead + '<tbody>' + allSorted.map(row).join('') + '</tbody></table></div>' : '<div class="ecs-empty">해당 기간에 건이 없습니다.</div>') + '</details>'
   + '</div></div>';
@@ -5249,6 +5258,8 @@ function renderEcoStats(){
   const rerender = ()=>{ ecsAnimate_ = true; renderEcoStats(); };
   el.querySelectorAll('.ecs-seg').forEach(g=> g.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; if(g.dataset.k === 'tab') ecsTab_ = b.dataset.v; else if(g.dataset.k === 'start') ecsStart_ = b.dataset.v; else ecsBasis_ = b.dataset.v; rerender(); }));
   el.querySelector('#ecsFrom').addEventListener('change', e=>{ ecsFrom_ = e.target.value; rerender(); });
+  el.querySelector('#ecsModel').addEventListener('change', e=>{ ecsModel_ = e.target.value; rerender(); });
+  el.querySelectorAll('.ecs-mtbl tr[data-model]').forEach(r=> r.addEventListener('click', ()=>{ ecsModel_ = ecsModel_ === r.dataset.model ? 'all' : r.dataset.model; rerender(); }));
   el.querySelector('#ecsTo').addEventListener('change', e=>{ ecsTo_ = e.target.value; rerender(); });
   el.querySelector('.ecs-chips').addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; const t = new Date(), y = t.getFullYear(), m = t.getMonth();
     ecsFrom_ = ecsYmd_({year:new Date(y, 0, 1), q:new Date(y, m - m % 3, 1), '3m':new Date(y, m - 2, 1), m:new Date(y, m, 1)}[b.dataset.q]); ecsTo_ = ecsYmd_(t); rerender(); });
@@ -5277,18 +5288,19 @@ function ecsPlayMotion_(el){
 function ecsExportXlsx_(D){
   if(typeof XLSX === 'undefined'){ alert('엑셀 라이브러리를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'); return; }
   const label = ECS_TABS_[ecsTab_], st = D.st, total = D.doneList.length + D.openList.length, wb = XLSX.utils.book_new(), fmtD = d=> d ? dashKey(d) : '';
-  const sum = [['설계변경 현황', label], ['기간', ecsFrom_ + ' ~ ' + ecsTo_], ['기준', ecsBasis_ === 'recv' ? ecsStartLabel_() + '일 기준' : '완료일 기준'], ['소요일', ecsStartLabel_() + '일→완료일 달력 일수'], [],
+  const sum = [['설계변경 현황', label], ['MODEL', ecsModel_ === 'all' ? '전체' : ecsModel_], ['기간', ecsFrom_ + ' ~ ' + ecsTo_], ['기준', ecsBasis_ === 'recv' ? ecsStartLabel_() + '일 기준' : '완료일 기준'], ['소요일', ecsStartLabel_() + '일→완료일 달력 일수'], [],
     ['대상(완료+남은 건)', total], ['완료', D.doneList.length], ['남은 건', D.openList.length], ['완료율(%)', total ? Math.round(D.doneList.length / total * 100) : 0],
     ['평균 소요일', +st.avg.toFixed(1)], ['중간값(일)', st.med], ['가장 오래(일)', st.max], ['30일 안에 완료', st.in30], ['30일 안에 완료(%)', st.n ? Math.round(st.in30 / st.n * 100) : 0],
     [], ['수신일 없어 제외', D.noRecv], ['소요일 계산 제외(완료일 없음 등)', D.noEnd], ['만든 날', dashKey(new Date())]];
   const s1 = XLSX.utils.aoa_to_sheet(sum); s1['!cols'] = [{wch:28}, {wch:30}]; XLSX.utils.book_append_sheet(wb, s1, '요약');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.months.map(m=> ({'월':m.ym, '도달':m.recv, '완료':m.done, '평균 소요일':m.avg == null ? '' : +m.avg.toFixed(1), '월말 남은 건':m.backlog}))), '월별');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.byModel.map(r=> ({'MODEL':r.m, '대상':r.n, '완료':r.done, '남은 건':r.open, '완료율(%)':Math.round(r.done / r.n * 100), '평균 소요일':r.avg == null ? '' : +r.avg.toFixed(1), '60일 넘은 남은 건':r.over60}))), '모델별');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.hist.map(h=> ({'소요일':h.label, '건수':h.n}))), '소요일분포');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.aging.map(h=> ({'경과일':h.label, '남은 건':h.n}))), '남은건경과');
   const rowOf = x=> ({'번호':x.t.docNumber || '', '제목':x.t.title || '', 'MODEL':x.t.model || '', '담당자':x.t.assignee || '', [ecsStartLabel_() + '일']:fmtD(x.recv), '업무 할당 수신일':x.t.assignDate || '', 'BOM 변경 수신일':x.t.bomRecvDate || '', '완료일':x.done ? fmtD(x.end) : '', '소요일':x.days ?? '', '경과일(남은 건)':x.age ?? '', '상태':x.t.status || ''});
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.openList.slice().sort((a,b)=> (b.age ?? -1) - (a.age ?? -1)).map(rowOf)), '남은건');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(D.doneList.concat(D.openList).sort((a,b)=> (b.recv || 0) - (a.recv || 0)).map(rowOf)), '전체목록');
-  XLSX.writeFile(wb, '설계변경현황_' + label + '_' + ecsFrom_ + '_' + ecsTo_ + '.xlsx');
+  XLSX.writeFile(wb, '설계변경현황_' + label + (ecsModel_ !== 'all' ? '_' + ecsModel_ : '') + '_' + ecsFrom_ + '_' + ecsTo_ + '.xlsx');
 }
 // PDF: 브라우저 인쇄("PDF로 저장")로 이 화면만, 밝은 색으로, 애니메이션은 끝난 상태·차트는 인쇄 폭으로 다시 그려서 찍는다
 function ecsPrint_(){
@@ -5302,7 +5314,7 @@ function ecsPrint_(){
 }
 
 /* ================= DASHBOARD ================= */
-let dashboardWeekOffset=0,dashboardAssignee='all',dashboardGanttMonthOffset=0,dashboardTileOpen=null,dashboardStatusChartOpen=false;
+let dashboardModel='all',dashboardWeekOffset=0,dashboardAssignee='all',dashboardGanttMonthOffset=0,dashboardTileOpen=null,dashboardStatusChartOpen=false;
 function dashDate(value){
   const m=String(value||'').match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:$|[ T])/);
   if(!m)return null;
@@ -5322,7 +5334,13 @@ function renderDashboard(){
   const gMonthStart=new Date(today.getFullYear(),today.getMonth()+dashboardGanttMonthOffset,1);
   const gMonthEnd=new Date(gMonthStart.getFullYear(),gMonthStart.getMonth()+1,0);
   const gDays=Array.from({length:gMonthEnd.getDate()},(_,i)=>new Date(gMonthStart.getFullYear(),gMonthStart.getMonth(),i+1));
-  const tasks=TASKS.filter(t=>dashboardAssignee==='all'||(t.assignee||'미배정')===dashboardAssignee);
+  const tasksO=TASKS.filter(t=>dashboardAssignee==='all'||(t.assignee||'미배정')===dashboardAssignee);
+  const dashModels=[...new Set(TASKS.flatMap(t=>modelsOf(t.model)))].sort((a,b)=>a==='미분류'?1:b==='미분류'?-1:a.localeCompare(b));
+  if(dashboardModel!=='all'&&!dashModels.includes(dashboardModel))dashboardModel='all';
+  const tasks=dashboardModel==='all'?tasksO:tasksO.filter(t=>modelsOf(t.model).includes(dashboardModel));
+  // 모델별(담당자 고르기는 따름, MODEL 고르기와는 상관없이 전체 모델) — 여러 모델이 붙은 건은 모델마다 셈
+  const byModel=dashModels.map(m=>{const L=tasksO.filter(t=>modelsOf(t.model).includes(m));return {m,n:L.length,open:L.filter(t=>t.status!=='완료').length};}).filter(r=>r.n).sort((a,b)=>b.open-a.open||b.n-a.n);
+  const maxBm=Math.max(1,...byModel.map(r=>r.n));
   const done=tasks.filter(t=>t.status==='완료').length,active=tasks.length-done;
   const overdue=tasks.filter(t=>t.status!=='완료'&&dashDate(t.dueRequest)&&dashDate(t.dueRequest)<today).length;
   const events=Object.fromEntries(days.map(d=>[dashKey(d),[]]));
@@ -5570,6 +5588,17 @@ function renderDashboard(){
         </div>
       </div>
       <div class="dash-panel">
+        <h2>🏷️ 모델별 업무 (미완료 / 전체)</h2>
+        <p class="dash-note">누르면 그 모델만 보기${dashboardModel!=='all'?' · 다시 누르면 전체':''} · 여러 모델이 붙은 건은 모델마다 셈</p>
+        <div class="dq-workload">
+          ${byModel.length? byModel.map(r=>`<button type="button" class="dq-wl-row" data-dash-model="${escapeHtml(r.m)}" style="${r.m===dashboardModel?'background:var(--border-soft);':''}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}">
+              <span class="dq-wl-name">${escapeHtml(r.m)}</span>
+              <div class="dq-wl-bar-track"><div class="dq-wl-bar-fill" style="width:${Math.round(r.n/maxBm*100)}%; background:var(--border); display:flex"><i style="width:${r.n?Math.round(r.open/r.n*100):0}%; background:var(--primary)"></i></div></div>
+              <span class="dq-wl-count">${r.open} / ${r.n}</span>
+            </button>`).join('') : '<div class="dash-note">업무가 없습니다.</div>'}
+        </div>
+      </div>
+      <div class="dash-panel">
         <h2>📊 상태 분포</h2>
         <div class="dq-stack">
           ${statusCounts.filter(s=>s.count>0).map(s=>{
@@ -5587,6 +5616,7 @@ function renderDashboard(){
     <div class="dash-controls">
       <button class="btn btn-ghost" id="dashPrev" aria-label="이전 주">← 이전 주</button><button class="btn btn-ghost" id="dashToday">이번 주</button><button class="btn btn-ghost" id="dashNext" aria-label="다음 주">다음 주 →</button>
       <h2>${dashKey(monday)} — ${dashKey(sunday)}</h2>
+      <select class="filt" id="dashModel" aria-label="대시보드 MODEL"><option value="all">전체 MODEL</option>${dashModels.map(m=>`<option value="${escapeHtml(m)}" ${m===dashboardModel?'selected':''}>${escapeHtml(m)}</option>`).join('')}</select>
       <select class="filt" id="dashOwner" aria-label="대시보드 담당자"><option value="all">전체 담당자</option>${owners.map(o=>`<option value="${escapeHtml(o)}" ${o===dashboardAssignee?'selected':''}>${escapeHtml(o)}</option>`).join('')}</select>
     </div>
     <div class="dash-panel"><h2>주간 업무현황 캘린더</h2><p class="dash-note">수신일·완료요청일·종료일 기준입니다. 업무를 클릭하면 상세 정보를 확인할 수 있습니다.</p>
@@ -5643,6 +5673,8 @@ function renderDashboard(){
   el.querySelector('#dashNext').onclick=()=>{dashboardWeekOffset++;renderDashboard();};
   el.querySelector('#dashToday').onclick=()=>{dashboardWeekOffset=0;renderDashboard();};
   el.querySelector('#dashOwner').onchange=e=>{dashboardAssignee=e.target.value;renderDashboard();};
+  el.querySelector('#dashModel').onchange=e=>{dashboardModel=e.target.value;renderDashboard();};
+  el.querySelectorAll('[data-dash-model]').forEach(b=>b.addEventListener('click',()=>{dashboardModel=dashboardModel===b.dataset.dashModel?'all':b.dataset.dashModel;renderDashboard();}));
   el.querySelector('#dashGanttPrev').onclick=()=>{dashboardGanttMonthOffset--;renderDashboard();};
   el.querySelector('#dashGanttNext').onclick=()=>{dashboardGanttMonthOffset++;renderDashboard();};
   el.querySelector('#dashGanttToday').onclick=()=>{dashboardGanttMonthOffset=0;renderDashboard();};
