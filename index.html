@@ -856,6 +856,18 @@
 .ecs-rk .no{font-size:12px; font-weight:700; color:var(--muted-2); text-align:center;}
 .ecs-rk .nm{min-width:0;} .ecs-rk .nm div{font-size:12.5px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;} .ecs-rk .nm small{font-family:"SFMono-Regular",Consolas,monospace; font-size:11px; color:var(--muted);}
 .ecs-rk .tr{grid-column:2; height:4px; border-radius:999px; background:color-mix(in srgb, var(--ink) 6%, transparent); overflow:hidden; margin-top:5px;} .ecs-rk .tr i{display:block; height:100%; border-radius:999px; background:var(--ecs-s3); transform-origin:left center;}
+.ecs-mrow{display:grid; grid-template-columns:110px minmax(0,1fr) auto; align-items:center; gap:14px; padding:9px 10px; margin:0 -10px; border-radius:10px; cursor:pointer; transition:opacity .15s, background .15s;}
+.ecs-mrow:hover{background:color-mix(in srgb, var(--ink) 5%, transparent);}
+.ecs-mrow.on{background:color-mix(in srgb, var(--ecs-s1) 10%, transparent); box-shadow:inset 3px 0 0 var(--ecs-s1);}
+.ecs-mlist.picked .ecs-mrow:not(.on){opacity:.45;} .ecs-mlist.picked .ecs-mrow:not(.on):hover{opacity:1;}
+.ecs-mrow .nm{font-size:13px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+.ecs-mrow .tk{height:12px; border-radius:999px; background:color-mix(in srgb, var(--ink) 6%, transparent); overflow:hidden;}
+.ecs-mrow .tk > span{display:flex; height:100%; border-radius:999px; overflow:hidden; transform-origin:left;}
+.ecs-mrow .tk i{display:block; height:100%;}
+.ecs-mrow .st{display:flex; gap:14px; font-size:12px; color:var(--muted); white-space:nowrap; font-variant-numeric:tabular-nums;}
+.ecs-mrow .st b{color:var(--ink); font-weight:700;} .ecs-mrow .st .w{min-width:64px; text-align:right;}
+.ecs-mpick{display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:color-mix(in srgb, var(--ecs-s1) 12%, transparent); color:var(--ecs-s1); font-size:12px; font-weight:700; border:0; cursor:pointer;}
+@media(max-width:760px){.ecs-mrow{grid-template-columns:80px minmax(0,1fr);} .ecs-mrow .st{grid-column:1 / -1; flex-wrap:wrap;}}
 .ecs-rk .dv{font-size:13px; font-weight:700; color:var(--ink); text-align:right; font-variant-numeric:tabular-nums;}
 /* 표 */
 .ecs-tbl-wrap{max-height:440px; overflow:auto; margin:0 -22px -20px; border-top:1px solid var(--border-soft);}
@@ -5218,6 +5230,7 @@ function renderEcoStats(){
     + '<div class="ecs-seg" data-k="tab">' + Object.entries(ECS_TABS_).map(([k, v])=> '<button type="button" data-v="' + k + '" class="' + (ecsTab_ === k ? 'on' : '') + '">' + v + '</button>').join('') + '</div>'
     + (ecsTab_ === 'ECO' ? '<div class="ecs-seg" data-k="start" title="소요일을 어디서부터 셀지"><button type="button" data-v="assign" class="' + (ecsStart_ === 'assign' ? 'on' : '') + '">업무 할당부터</button><button type="button" data-v="bom" class="' + (ecsStart_ === 'bom' ? 'on' : '') + '">BOM 변경 수신부터</button></div>' : '')
     + '<div class="ecs-seg" data-k="basis"><button type="button" data-v="recv" class="' + (ecsBasis_ === 'recv' ? 'on' : '') + '">' + (ecsTab_ === 'ECO' ? '시작일' : '도달일') + ' 기준</button><button type="button" data-v="end" class="' + (ecsBasis_ === 'end' ? 'on' : '') + '">완료일 기준</button></div>'
+    + (ecsModel_ !== 'all' ? '<button type="button" class="ecs-mpick" id="ecsModelClear" title="전체 MODEL로">MODEL: ' + esc(ecsModel_) + ' ✕</button>' : '')
     + '<select class="filt" id="ecsModel" aria-label="MODEL"><option value="all">전체 MODEL</option>' + D.mNames.map(m=> '<option value="' + esc(m) + '"' + (m === ecsModel_ ? ' selected' : '') + '>' + esc(m) + '</option>').join('') + '</select>'
     + '<span class="ecs-date"><input type="date" id="ecsFrom" value="' + ecsFrom_ + '" aria-label="시작일"> – <input type="date" id="ecsTo" value="' + ecsTo_ + '" aria-label="종료일"></span>'
     + '<span class="ecs-chips"><button type="button" data-q="year">올해</button><button type="button" data-q="q">이번 분기</button><button type="button" data-q="3m">최근 3개월</button><button type="button" data-q="m">이번 달</button></span>'
@@ -5243,10 +5256,15 @@ function renderEcoStats(){
       + (agTot ? '<div class="ecs-stack">' + D.aging.map((h, i)=> h.n ? '<i class="ecs-sg" style="flex:' + h.n + ';background:var(--ecs-a' + (i + 1) + ')" title="' + h.label + ' ' + h.n + '건"></i>' : '').join('') + '</div>'
         + '<div class="ecs-rows">' + D.aging.map((h, i)=> '<div class="ecs-row"><i style="background:var(--ecs-a' + (i + 1) + ')"></i>' + h.label + '<b>' + h.n + '건 <span style="color:var(--muted);font-weight:500">· ' + Math.round(h.n / agTot * 100) + '%</span></b></div>').join('') + '</div>' : '<div class="ecs-empty">남은 건이 없습니다.</div>')
     + '</div>'
-    + (()=>{ const R = D.byModel, mx = Math.max(1, ...R.map(r=> r.n)); return '<div class="ecs-card"><div class="ecs-hd"><div><h3>모델별</h3><p>누르면 그 모델만 보기' + (ecsModel_ !== 'all' ? ' · 다시 누르면 전체' : '') + ' · 여러 모델이 붙은 건은 모델마다 셈</p></div></div>'
-      + (R.length ? '<div class="ecs-tbl-wrap" style="max-height:none;overflow:visible"><table class="ecs-tbl ecs-mtbl"><thead><tr><th>MODEL</th><th>대상</th><th class="num">완료</th><th class="num">남은 건</th><th class="num">완료율</th><th class="num">평균 소요일</th><th class="num">60일 넘은 남은 건</th></tr></thead><tbody>'
-        + R.map(r=> '<tr data-model="' + esc(r.m) + '"' + (r.m === ecsModel_ ? ' style="background:var(--border-soft)"' : '') + '><td><b>' + esc(r.m) + '</b></td><td style="min-width:140px"><span style="display:inline-flex;vertical-align:middle;height:8px;width:' + Math.max(2, Math.round(r.n / mx * 100)) + 'px;border-radius:4px;overflow:hidden;background:var(--ecs-a3)"><i style="flex:' + r.done + ';background:var(--ecs-s2)"></i><i style="flex:' + r.open + '"></i></span> ' + r.n + '</td><td class="num">' + r.done + '</td><td class="num">' + r.open + '</td><td class="num">' + Math.round(r.done / r.n * 100) + '%</td><td class="num">' + (r.avg == null ? '—' : f1(r.avg) + '일') + '</td><td class="num">' + (r.over60 ? '<span class="crit">' + r.over60 + '</span>' : '0') + '</td></tr>').join('')
-        + '</tbody></table></div>' : '<div class="ecs-empty">해당 건이 없습니다.</div>') + '</div>'; })()
+    + (()=>{ const R = D.byModel, mx = Math.max(1, ...R.map(r=> r.n)), pk = ecsModel_ !== 'all';
+      return '<div class="ecs-card"><div class="ecs-hd"><div><h3>모델별</h3><p>' + (pk ? '<b>' + esc(ecsModel_) + '</b>만 보는 중 · 위쪽 숫자·차트·목록이 모두 이 모델 기준 · 같은 줄을 다시 누르면 전체' : '줄을 누르면 화면 전체가 그 모델 기준으로 바뀜') + ' · 여러 모델이 붙은 건은 모델마다 셈</p></div>'
+      + '<div class="ecs-lg"><span><i style="background:var(--ecs-s2)"></i>완료</span><span><i style="background:var(--ecs-a3)"></i>남은 건</span></div></div>'
+      + (R.length ? '<div class="ecs-mlist' + (pk ? ' picked' : '') + '">' + R.map(r=> '<div class="ecs-mrow' + (r.m === ecsModel_ ? ' on' : '') + '" data-model="' + esc(r.m) + '" title="' + esc(r.m) + ' · 대상 ' + r.n + '건 (완료 ' + r.done + ' · 남은 건 ' + r.open + ')">'
+          + '<div class="nm">' + esc(r.m) + '</div>'
+          + '<div class="tk"><span class="ecs-mt" style="width:' + Math.max(3, r.n / mx * 100).toFixed(1) + '%"><i style="flex:' + r.done + ';background:var(--ecs-s2)"></i><i style="flex:' + r.open + ';background:var(--ecs-a3)"></i></span></div>'
+          + '<div class="st"><span><b>' + r.n + '</b>건</span><span>완료 <b>' + r.done + '</b></span><span>남은 <b>' + r.open + '</b></span><span class="w"><b>' + Math.round(r.done / r.n * 100) + '</b>%</span><span class="w">평균 <b>' + (r.avg == null ? '—' : f1(r.avg)) + '</b>일</span>'
+          + (r.over60 ? '<span class="crit">⚠ 60일+ ' + r.over60 + '</span>' : '<span style="visibility:hidden">⚠ 60일+ 0</span>') + '</div></div>').join('') + '</div>'
+        : '<div class="ecs-empty">해당 건이 없습니다.</div>') + '</div>'; })()
     + '<div class="ecs-card c5"><div class="ecs-hd"><div><h3>오래 걸린 TOP 10</h3><p>누르면 상세</p></div></div>'
       + (D.top.length ? '<div class="ecs-rank">' + D.top.map((x, i)=> '<div class="ecs-rk" data-id="' + esc(x.t.id) + '" title="' + esc(fmtD(x.recv) + ' → ' + fmtD(x.end)) + '"><span class="no">' + (i + 1) + '</span><div class="nm"><div>' + esc(x.t.title || '') + '</div><small>' + esc(x.t.docNumber || '') + '</small><div class="tr"><i class="ecs-rb" style="width:' + (x.days / topMax * 100).toFixed(1) + '%"></i></div></div><span class="dv">' + x.days + '일</span></div>').join('') + '</div>' : '<div class="ecs-empty">완료한 건이 없습니다.</div>')
     + '</div>'
@@ -5258,8 +5276,10 @@ function renderEcoStats(){
   const rerender = ()=>{ ecsAnimate_ = true; renderEcoStats(); };
   el.querySelectorAll('.ecs-seg').forEach(g=> g.addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; if(g.dataset.k === 'tab') ecsTab_ = b.dataset.v; else if(g.dataset.k === 'start') ecsStart_ = b.dataset.v; else ecsBasis_ = b.dataset.v; rerender(); }));
   el.querySelector('#ecsFrom').addEventListener('change', e=>{ ecsFrom_ = e.target.value; rerender(); });
-  el.querySelector('#ecsModel').addEventListener('change', e=>{ ecsModel_ = e.target.value; rerender(); });
-  el.querySelectorAll('.ecs-mtbl tr[data-model]').forEach(r=> r.addEventListener('click', ()=>{ ecsModel_ = ecsModel_ === r.dataset.model ? 'all' : r.dataset.model; rerender(); }));
+  el.querySelector('#ecsModel').addEventListener('change', e=>{ ecsModel_ = e.target.value; renderEcoStats(); });
+  const pickModel = m=>{ ecsModel_ = m; renderEcoStats(); const top = el.getBoundingClientRect().top + window.scrollY - 70; window.scrollTo({top: Math.max(0, top), behavior: 'smooth'}); };
+  el.querySelectorAll('.ecs-mrow[data-model]').forEach(r=> r.addEventListener('click', ()=> pickModel(ecsModel_ === r.dataset.model ? 'all' : r.dataset.model)));
+  const mc = el.querySelector('#ecsModelClear'); if(mc) mc.addEventListener('click', ()=> pickModel('all'));
   el.querySelector('#ecsTo').addEventListener('change', e=>{ ecsTo_ = e.target.value; rerender(); });
   el.querySelector('.ecs-chips').addEventListener('click', e=>{ const b = e.target.closest('button'); if(!b) return; const t = new Date(), y = t.getFullYear(), m = t.getMonth();
     ecsFrom_ = ecsYmd_({year:new Date(y, 0, 1), q:new Date(y, m - m % 3, 1), '3m':new Date(y, m - 2, 1), m:new Date(y, m, 1)}[b.dataset.q]); ecsTo_ = ecsYmd_(t); rerender(); });
