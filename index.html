@@ -7466,7 +7466,7 @@ function buildPlmImport_(rows){
     if(!groups.has(doc)) groups.set(doc, {kind, rows:[]});
     groups.get(doc).rows.push(r);
   });
-  const toCreate = [], toUpdate = [], statusDiffs = [], cancelled = [];
+  const toCreate = [], toUpdate = [], statusDiffs = [], cancelled = [], notYet = [];
   groups.forEach(({kind, rows:rs}, doc)=>{
     const acts = rs.filter(r=> String(r['활동상태']).trim() !== '취소됨');
     if(!acts.length || rs.every(r=> String(r['문서상태']).trim() === '취소됨')){ cancelled.push(doc); return; }
@@ -7492,16 +7492,18 @@ function buildPlmImport_(rows){
     const plm = {doc, kind, title:String(rs[0]['제목']||'').trim() || doc, type: PLM_KIND_TYPE_[kind], receivedDate, assignDate, bomRecvDate, endDate, done, waiting, newRecv, newEnd,
       left: left.map(r=> `${String(r['활동']).trim()}(${String(r['활동상태']).trim()})`)};
     const existing = TASKS.find(t=> t.docNumber === doc);
+    // 신규코드등록(MDM)은 SAP MBOM 구성 단계(STEP7)가 와야 우리 팀 업무 — 안 왔으면 새로 등록하지 않음(사용자 2026-11-27)
+    if(!existing && kind === '신규코드등록' && !acts.some(r=> /SAP MBOM/.test(String(r['활동'])) && d(r['수신일']))){ notYet.push(doc); return; }
     if(existing){
       toUpdate.push({existing, plm});
       if((existing.status === '완료') !== done && !(waiting && existing.status === '진행 중')) statusDiffs.push({existing, plm});
     } else toCreate.push(plm);
   });
   const toWait = toUpdate.filter(u=> u.plm.waiting && u.existing.status === '진행 중');
-  return {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds, toWait};
+  return {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds, toWait, notYet};
 }
 function openPlmReview_(res){
-  const {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds, toWait} = res;
+  const {toCreate, toUpdate, statusDiffs, cancelled, skippedKinds, toWait, notYet = []} = res;
   const overlay = document.getElementById('overlay'), modal = document.getElementById('modal');
   const sixMonthsAgo = Date.now() - SIX_MONTHS_MS;
   const autoDelay = [...toCreate.filter(c=> !c.done), ...toUpdate.filter(u=> u.existing.status !== '완료').map(u=> u.plm)]
@@ -7517,7 +7519,7 @@ function openPlmReview_(res){
         · <b>새로 등록 ${toCreate.length}건</b> (완료 ${toCreate.filter(c=>c.done).length} / 남은 건 ${toCreate.filter(c=>!c.done).length}) — 담당자 ${escapeHtml(plmOwner_())}, MODEL 미분류<br>
         · <b>보드에 이미 있는 건 ${toUpdate.length}건</b> — 수신일·완료일만 바꿈(실제로 날짜가 바뀌는 건 ${dateChanged}건), 상태·제목·담당자는 그대로<br>
         ${toWait.length ? `· <b>보드에서 '진행 중'인데 PLM에서 아직 우리 팀에 안 넘어온 ${toWait.length}건 → '업무할당 완료'로 바꿈</b> (남은 활동이 모두 수신일 없음)<br>` : ''}${toCreate.some(c=>c.waiting) ? `· 새 건 중 아직 안 넘어온 ${toCreate.filter(c=>c.waiting).length}건은 '업무할당 완료'로 등록<br>` : ''}
-        ${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
+        ${notYet.length ? `· SAP MBOM 단계가 아직 안 온 신규코드등록 ${notYet.length}건은 등록하지 않음 (${notYet.map(escapeHtml).join(', ')})<br>` : ''}${cancelled.length ? `· 전부 취소된 ${cancelled.length}건은 뺌<br>` : ''}${skipped ? `· 대상이 아닌 구분은 뺌: ${skipped}<br>` : ''}
         ${autoDelay ? `· 수신일이 6개월 넘었는데 아직 안 끝난 ${autoDelay}건은 보드 규칙대로 "장기 지연"으로 바뀝니다<br>` : ''}
       </div>
       <div style="display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:14px; padding-top:14px; border-top:1px solid var(--border-soft);">
