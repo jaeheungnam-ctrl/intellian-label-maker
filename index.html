@@ -5359,7 +5359,8 @@ function renderDashboard(){
   dashboardModels=dashboardModels.filter(m=>dashModels.includes(m));
   const tasks=dashboardModels.length?tasksO.filter(t=>modelsOf(t.model).some(m=>dashboardModels.includes(m))):tasksO;
   // 모델별(담당자 고르기는 따름, MODEL 고르기와는 상관없이 전체 모델) — 여러 모델이 붙은 건은 모델마다 셈
-  const byModel=dashModels.map(m=>{const L=tasksO.filter(t=>modelsOf(t.model).includes(m));return {m,n:L.length,open:L.filter(t=>t.status!=='완료').length};}).filter(r=>r.n).sort((a,b)=>b.open-a.open||b.n-a.n);
+  const byModel=dashModels.map(m=>{const L=tasksO.filter(t=>modelsOf(t.model).includes(m));return {m,n:L.length,open:L.filter(t=>t.status!=='완료').length,wk:L.filter(t=>{if(t.status!=='완료')return false;const d=dashDate(t.endDate);return d&&d>=monday&&d<=sunday;}).length};}).filter(r=>r.n).sort((a,b)=>b.wk-a.wk||b.open-a.open||b.n-a.n);
+  const wkLabel=dashboardWeekOffset===0?'이번 주 완료':`${monday.getMonth()+1}/${monday.getDate()}~${sunday.getMonth()+1}/${sunday.getDate()} 완료`;
   const maxBm=Math.max(1,...byModel.map(r=>r.n));
   const done=tasks.filter(t=>t.status==='완료').length,active=tasks.length-done;
   const overdue=tasks.filter(t=>t.status!=='완료'&&dashDate(t.dueRequest)&&dashDate(t.dueRequest)<today).length;
@@ -5624,11 +5625,12 @@ function renderDashboard(){
 
     <div class="dash-panel">
       <h2>🏷️ 모델별 업무</h2>
-      <p class="dash-note">큰 숫자 = 미완료 · 막대 = 완료율 · 누를 때마다 넣고 빼기(여러 개 고르면 그중 하나라도 붙은 업무)${dashboardModels.length?` · <b>${dashboardModels.map(escapeHtml).join(', ')}</b> 보는 중 <button type="button" id="dashModelClear" style="border:0;background:none;color:var(--primary);cursor:pointer;font:inherit;text-decoration:underline;padding:0">전체 보기</button>`:''} · 여러 모델이 붙은 건은 모델마다 셈</p>
+      <p class="dash-note">큰 숫자 = ${wkLabel}(위 주간 캘린더의 주, 완료일 기준) · 막대 = 완료율 · 누를 때마다 넣고 빼기(여러 개 고르면 그중 하나라도 붙은 업무)${dashboardModels.length?` · <b>${dashboardModels.map(escapeHtml).join(', ')}</b> 보는 중 <button type="button" id="dashModelClear" style="border:0;background:none;color:var(--primary);cursor:pointer;font:inherit;text-decoration:underline;padding:0">전체 보기</button>`:''} · 여러 모델이 붙은 건은 모델마다 셈</p>
       <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px;">
         ${byModel.length? byModel.map(r=>{const pct=r.n?Math.round((r.n-r.open)/r.n*100):0;return `<button type="button" data-dash-model="${escapeHtml(r.m)}" title="${escapeHtml(r.m)}: 미완료 ${r.open} / 전체 ${r.n}" style="text-align:left; padding:12px 14px; border-radius:12px; border:1px solid ${dashboardModels.includes(r.m)?'var(--primary)':'var(--border-soft)'}; background:${dashboardModels.includes(r.m)?'var(--border-soft)':'var(--surface)'}; cursor:pointer; font:inherit; color:inherit;">
           <div style="font-size:12.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(r.m)}</div>
-          <div style="display:flex; align-items:baseline; gap:6px; margin:4px 0 6px;"><b style="font-size:24px; line-height:1;${r.open?'':' color:var(--muted-2);'}">${r.open}</b><span style="font-size:11.5px; color:var(--muted); white-space:nowrap;">미완료 · 전체 ${r.n}</span></div>
+          <div style="display:flex; align-items:baseline; gap:6px; margin:4px 0 6px;"><b style="font-size:24px; line-height:1;${r.wk?'':' color:var(--muted-2);'}">${r.wk}</b><span style="font-size:11.5px; color:var(--muted); white-space:nowrap;">${wkLabel}</span></div>
+          <div style="font-size:11.5px; color:var(--muted); margin:-2px 0 6px; white-space:nowrap;">미완료 <b style="color:var(--ink)">${r.open}</b> · 전체 ${r.n}</div>
           <div style="height:5px; border-radius:3px; background:var(--border-soft); overflow:hidden;"><div style="height:100%; width:${pct}%; background:var(--primary);"></div></div>
           <div style="font-size:11px; color:var(--muted); margin-top:4px;">완료율 ${pct}%</div>
         </button>`;}).join('') : '<div class="dash-note">업무가 없습니다.</div>'}
